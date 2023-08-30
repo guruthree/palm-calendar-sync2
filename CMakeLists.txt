@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
+# https://cmake.org/cmake/help/latest/guide/tutorial/A%20Basic%20Starting%20Point.html#exercise-1-building-a-basic-project
 
 # borrowed from pico?
 project(test_project C CXX ASM)
