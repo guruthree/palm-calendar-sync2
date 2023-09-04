@@ -1,16 +1,24 @@
 // TODO: copyright
 
 #include <cstring>
+//#include <cstdlib>
+//#include <iomanip>
 #include <iostream>
 #include <string>
+#include <vector>
 
-#include <libical/ical.h>
+#include <libconfig.h++>
 #include <curl/curl.h>
+#include <libical/ical.h>
+
 #include <libpisock/pi-datebook.h>
+#include <libpisock/pi-dlp.h>
+#include <libpisock/pi-socket.h>
 
 // sync-calendar attempt to read ical file and write to palm pilot
 // if we're really good also try to not repeat any event that already exists
 
+using namespace libconfig;
 
 // callback for having curl store output in a std::string
 // https://stackoverflow.com/questions/2329571/c-libcurl-get-output-into-a-string
@@ -35,20 +43,69 @@ size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmem
 // * source ical file/url
 // * option to disable ssl cert checks
 // * check datebookcfg from previous python project
-int main() {
+int main(int argc, char **argv) {
 
-    std::string icaldata; // the downloaded ical data
 
+    /** variables **/
+
+    // use to mark exiting on an error
+    bool failed = false;
+
+    // configuration settings
+    std::string uri, timezone, port;
+    int fromyear;
+
+    // the downloaded ical data
+    std::string icaldata;
+
+
+    /** read in configuration settings using libconfig **/
+    Config cfg;
+    try
+    {
+        cfg.readFile("datebook.cfg");
+    }
+    catch(const FileIOException &fioex)
+    {
+        std::cerr << "I/O error while reading file." << std::endl;
+        return(EXIT_FAILURE);
+    }
+    catch(const ParseException &pex)
+    {
+        std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
+    }
+
+    // there's probably a nicer way to duplicate this code with templates?
+    if (!cfg.lookupValue("URI", uri)) {
+        std::cerr << "No 'URI' setting in configuration file, failing." << std::endl;
+        return(EXIT_FAILURE);
+    }
+    if (!cfg.lookupValue("TIMEZONE", timezone)) {
+        std::cerr << "No 'TIMEZONE' setting, assuming UTC." << std::endl;
+        timezone = "UTC";
+    }
+    if (!cfg.lookupValue("FROMYEAR", fromyear)) {
+        std::cerr << "No 'FROMYEAR' setting, assuming all." << std::endl;
+        fromyear = 0;
+    }
+    if (!cfg.lookupValue("PORT", port)) {
+        std::cerr << "No 'PORT' setting in configuration file, failing." << std::endl;
+        return(EXIT_FAILURE);
+    }
+
+    std::cout << "uri: " << uri << std::endl;
+    std::cout << "timezone: " << timezone << std::endl;
+    std::cout << "fromyear: " << fromyear << std::endl;
+    std::cout << "port: " << port << std::endl << std::endl;
+
+
+    /** read in calendar data using libcurl **/
     CURL *curl;
     CURLcode res;
-
     curl_global_init(CURL_GLOBAL_DEFAULT);
-
     curl = curl_easy_init();
     if(curl) {
-//        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/basic.ics");
-//        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/holidays.ics");
-        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/oneevent.ics");
+        curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
 
         // disable some SSL checks, reduced security
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -66,16 +123,35 @@ int main() {
 
         // check for errors
         if(res != CURLE_OK) {
-            std::cout << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            failed = true;
             // TODO: handle this nicely
         }
-std::cout << res;
+
+        long http_code = 0;
+        curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
+        if (http_code != 200) {
+            std::cerr << "error fetching URI, http response code " << http_code << std::endl;
+            failed = true;
+        }
+
         // always cleanup!
         curl_easy_cleanup(curl);
+    }
+    else {
+        std::cerr << "error initialising curl" << std::endl;
     }
 
     curl_global_cleanup();
  
+    if (failed) {
+        // something went wrong along the way, exist
+        std::cerr << "exiting after error" << std::endl;
+        return 0;
+    }
+
+
+    /** parse calendar using libical **/
 
     // ical specifies components, properties, values, and parameters and I think there's
     // a bit of a metaphor relating that to HTML, with COMPONENTS corresponding to an
@@ -89,6 +165,8 @@ std::cout << res;
     // remove errors (which also includes empty descriptions, locations, and the like) 
     icalcomponent_strip_errors(components);
 
+struct Appointment appointment;
+
     // if there is some valid ical data to work through
     if (components != nullptr) {
 
@@ -101,45 +179,25 @@ std::cout << res;
                 c = icalcomponent_get_next_component(components, ICAL_VEVENT_COMPONENT)) {
 
 
-//                if (icalcomponent_isa(c) == ICAL_VEVENT_COMPONENT) {
+            // palm only has start time, end time, alarm, repeat, description, and note
+            // so we only need to extract those things from the component if they're there
+            // every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
+            // palm won't take an event with a description
 
-            // TODO: extract alarm information with icalcomponent_get_first_component and ICAL_VALARM_COMPONENT
-
-            std::cout << "new component" << std::endl;
-
-
-            struct     Appointment appointment;
-
-//            icalproperty *p; // there will definetely be properties
-
-// palm only has start time, end time, alarm, repeat, description, and note
-// so we only need to extract those things from the component if they're there
-// every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
-// palm won't take an event with a description
-// merge location and description into the note (palmos5 has a location but pilot-link doesn't support it)
-
+            std::cout << "Processing event" << std::endl;
 
             std::string summary(icalcomponent_get_summary(c));
             std::cout << "    Summary: " << summary << std::endl;
 
-//            const char* summary = icalcomponent_get_summary(c);
-//            if (summary != nullptr)
-//                std::cout << "    Summary: " << summary << std::endl;
-//            else
-//                continue; // no summary, no go
-
-//            const char* description = icalcomponent_get_description(c);
-//            if (description != nullptr)
-//                std::cout << "    Description: " << description << std::endl;
-
-//            const char* location = icalcomponent_get_location(c);
-//            if (location != nullptr)
-//                std::cout << "    Location: " << location << std::endl;
-
-            char buf[200];
-            char notebuf[2000];
-
+            // skip older entries
             icaltimetype start = icalcomponent_get_dtstart(c);
+            if (start.year < fromyear) {
+                std::cout << "    Skipping" << std::endl;
+                continue;
+            }
+
+            // convert dates and times to start_tm for transfer to palm
+            char buf[200];
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
             tm *start_tm = gmtime(&start_time_t);
             if (icaltime_is_date(start)) { // no time, so whole day
@@ -148,7 +206,7 @@ std::cout << res;
             else {
                 strftime(buf, sizeof buf, "%FT%TZ", start_tm);
             }
-            std::cout << "    Start:" << buf << std::endl;
+            std::cout << "    Start: " << buf << std::endl;
 
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
@@ -159,36 +217,79 @@ std::cout << res;
             else {
                 strftime(buf, sizeof buf, "%FT%TZ", end_tm);
             }
-            std::cout << "    End:" << buf << std::endl;
+            std::cout << "    End: " << buf << std::endl;
 
-if (icaltime_is_date(start) && icaltime_is_date(end))
-    appointment.event = 1;
-else
-    appointment.event = 0;
+            std::string location;
+            const char* location_c = icalcomponent_get_location(c);
+            if (location_c != nullptr) {
+                location = location_c;
+            }
+            else {
+                location = "None";
+//                location = "";
+            }
 
-appointment.begin = *start_tm;
-appointment.end = *end_tm;
+            std::string description;
+            const char* description_c = icalcomponent_get_description(c);
+            if (description_c != nullptr) {
+                description = description_c;
+            }
+            else {
+                description = "";
+            }
 
-//strcpy(buf, summary);
-char buf2[summary.length()];
-strcpy(buf2, summary.c_str());
+            // merge location and description into the note (palmos5 has a location but pilot-link doesn't support it)
+            // TODO: smarter here, don't add location bit if no location, and nothing at all if both blank
+            std::string note = "Location: " + location;
+            if (description.length() > 0) {
+                note = note + "\n\n" + description;
+            }
+            std::cout << "    Note: [[" << note << "]]" << std::endl;
 
-appointment.alarm         = 0;
-appointment.advance       = 0;
-appointment.advanceUnits  = 0;
-appointment.repeatType         = repeatNone;
-appointment.repeatForever      = 0;
-appointment.repeatEnd.tm_mday  = 0;
-appointment.repeatEnd.tm_mon   = 0;
-appointment.repeatEnd.tm_wday  = 0;
-appointment.repeatFrequency    = 0;
-appointment.repeatWeekstart    = 0;
-appointment.exceptions         = 0;
-appointment.exception          = NULL;
-appointment.description        = buf;
-appointment.note               = NULL;
+            // an annoying round about route from const char* to std::string to char*
+            // https://stackoverflow.com/questions/7352099/stdstring-to-char
+            char *summary_c = new char[summary.length()+1];
+            strcpy(summary_c, summary.c_str());
+            char *note_c = new char[note.length()+1];
+            strcpy(note_c, note.c_str());
 
-/*            for(p = icalcomponent_get_first_property(c, ICAL_ANY_PROPERTY); p != 0;
+            // TODO: delete [] summary_c;
+            // TODO: delete [] note_c;
+
+            // store information about this event in the pilot-link struct
+            // see pi-datebook.h for details of format
+//            struct Appointment appointment;
+
+            // TODO: only copy if the appointment doesn't already exist
+
+            // TODO: delete all existing appointments
+
+            if (icaltime_is_date(start) && icaltime_is_date(end))
+                appointment.event          = 1;
+            else
+                appointment.event          = 0;
+            appointment.begin              = *start_tm; // de-reference?
+            appointment.end                = *end_tm;
+appointment.end.tm_hour++; // ?????
+            appointment.alarm              = 0;
+            appointment.advance            = 0;
+            appointment.advanceUnits       = 0;
+            appointment.repeatType         = repeatNone;
+            appointment.repeatForever      = 0;
+            appointment.repeatEnd.tm_mday  = 0;
+            appointment.repeatEnd.tm_mon   = 0;
+            appointment.repeatEnd.tm_wday  = 0;
+            appointment.repeatFrequency    = 0;
+            appointment.repeatWeekstart    = 0;
+            appointment.exceptions         = 0;
+            appointment.exception          = NULL;
+            appointment.description        = summary_c;
+            appointment.note               = note_c;
+
+
+/*            icalproperty *p; // there will definetely be properties
+
+            for(p = icalcomponent_get_first_property(c, ICAL_ANY_PROPERTY); p != 0;
                     p = icalcomponent_get_next_property(c, ICAL_ANY_PROPERTY)) {
 
                 // use the get functions for these
@@ -239,14 +340,140 @@ appointment.note               = NULL;
             } // for p
             if (p != nullptr) icalproperty_free(p); */
 
-            std::cout << "end component" << std::endl;
-//} // kind
+            std::cout << "End of event" << std::endl;
+
         } // for c
         if (c != nullptr) icalcomponent_free(c);
 
         icalcomponent_free(components); // already not null by definition inside this loop
 
     } // if components
+
+//return 0;
+
+
+
+    int db; 
+	int sd = -1;
+	int result;
+
+	pi_buffer_t *Appointment_buf;
+	Appointment_buf 	= pi_buffer_new (0xffff);
+
+
+	struct 	PilotUser User;
+
+int plu_quiet = 0; // don't surpress some output
+int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forwever with 0?
+
+// from pilot-link userland.c
+	struct  SysInfo sys_info;
+
+	if ((sd = pi_socket(PI_AF_PILOT,
+			PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
+		fprintf(stderr, "\n   Unable to create socket '%s'\n", port.c_str());
+		return -1;
+	}
+
+	result = pi_bind(sd, port.c_str());
+
+	if (result < 0) {
+		fprintf(stderr, "   Unable to bind to port: %s\n"
+				"   Please use --help for more information\n\n",
+				port.c_str());
+		return result;
+	}
+
+	if (!plu_quiet && isatty(fileno(stdout))) {
+		printf("\n   Listening for incoming connection on %s... ",
+			port.c_str());
+		fflush(stdout);
+	}
+
+	if (pi_listen(sd, 1) < 0) {
+		fprintf(stderr, "\n   Error listening on %s\n", port.c_str());
+		pi_close(sd);
+		return -1;
+	}
+
+	sd = pi_accept_to(sd, 0, 0, plu_timeout);
+	if (sd < 0) {
+		fprintf(stderr, "\n   Error accepting data on %s\n", port.c_str());
+		pi_close(sd);
+		return -1;
+	}
+
+	if (!plu_quiet && isatty(fileno(stdout))) {
+		printf("connected!\n\n");
+	}
+
+	if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
+		fprintf(stderr, "\n   Error read system info on %s\n", port.c_str());
+		pi_close(sd);
+		return -1;
+	}
+
+	dlp_OpenConduit(sd);
+
+    if (sd < 0)
+		return 0;
+
+	if (dlp_OpenConduit(sd) < 0) {
+	    pi_close(sd);
+        return 0;
+    }
+
+	dlp_ReadUserInfo(sd, &User);
+	dlp_OpenConduit(sd);
+
+	/* Open the Datebook's database, store access handle in db */
+	if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
+		fprintf(stderr,"   ERROR: Unable to open DatebookDB on Palm\n");
+		dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
+        // (char*) is a little unsafe, but function does not edit the string
+	    pi_close(sd);
+        return 0;
+	}
+
+
+/// data transfer bit?
+			pack_Appointment(&appointment, Appointment_buf, datebook_v1);
+
+			dlp_WriteRecord(sd, db, 0, 0, 0,
+					Appointment_buf->data,
+					Appointment_buf->used, 0);
+
+
+
+	/* Close the database */
+	dlp_CloseDB(sd, db);
+
+	/* Tell the user who it is, with a different PC id. */
+	User.lastSyncPC 	= 0x00010000;
+	User.successfulSyncDate = time(NULL);
+	User.lastSyncDate 	= User.successfulSyncDate;
+	dlp_WriteUserInfo(sd, &User);
+
+
+	if (dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointment to Palm.\n" 
+				"Thank you for using pilot-link.\n") < 0) {
+                // (char*) is a little unsafe, but function does not edit the string
+	    pi_close(sd);
+        return 0;
+    }
+    
+
+    if(dlp_EndOfSync(sd, 0) < 0)  {
+	    pi_close(sd);
+        return 0;
+    }
+
+std::cout << "probably just hanging in libusb now..." << std::endl;
+
+	if(pi_close(sd) < 0) {
+		std::cout << "error closing socket to plam pilot" << std::endl;
+        // TODO: hangs on pi_close
+    }
 
     return 0;
 }
