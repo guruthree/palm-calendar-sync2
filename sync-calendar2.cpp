@@ -1,3 +1,6 @@
+// TODO: copyright
+
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -43,8 +46,9 @@ int main() {
 
     curl = curl_easy_init();
     if(curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/basic.ics");
+//        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/basic.ics");
 //        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/holidays.ics");
+        curl_easy_setopt(curl, CURLOPT_URL, "https://localhost/oneevent.ics");
 
         // disable some SSL checks, reduced security
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -62,10 +66,10 @@ int main() {
 
         // check for errors
         if(res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            std::cout << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
             // TODO: handle this nicely
         }
-
+std::cout << res;
         // always cleanup!
         curl_easy_cleanup(curl);
     }
@@ -92,25 +96,117 @@ int main() {
         icalcomponent *c;
 
         // TODO: google calendar output might have some time-zone definitions at the
-        // start via X-LIC-LOCATION if we accept any any component
-        for(c = icalcomponent_get_first_component(components, ICAL_ANY_COMPONENT); c != 0;
-                c = icalcomponent_get_next_component(components, ICAL_ANY_COMPONENT)) {
+        // start via X-LIC-LOCATION if we accept ICAL_ANY_COMPONENT
+        for(c = icalcomponent_get_first_component(components, ICAL_VEVENT_COMPONENT); c != 0;
+                c = icalcomponent_get_next_component(components, ICAL_VEVENT_COMPONENT)) {
+
+
+//                if (icalcomponent_isa(c) == ICAL_VEVENT_COMPONENT) {
+
+            // TODO: extract alarm information with icalcomponent_get_first_component and ICAL_VALARM_COMPONENT
 
             std::cout << "new component" << std::endl;
 
-            icalproperty *p; // there will definetely be properties
 
-            for(p = icalcomponent_get_first_property(c, ICAL_ANY_PROPERTY); p != 0;
+            struct     Appointment appointment;
+
+//            icalproperty *p; // there will definetely be properties
+
+// palm only has start time, end time, alarm, repeat, description, and note
+// so we only need to extract those things from the component if they're there
+// every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
+// palm won't take an event with a description
+// merge location and description into the note (palmos5 has a location but pilot-link doesn't support it)
+
+
+            std::string summary(icalcomponent_get_summary(c));
+            std::cout << "    Summary: " << summary << std::endl;
+
+//            const char* summary = icalcomponent_get_summary(c);
+//            if (summary != nullptr)
+//                std::cout << "    Summary: " << summary << std::endl;
+//            else
+//                continue; // no summary, no go
+
+//            const char* description = icalcomponent_get_description(c);
+//            if (description != nullptr)
+//                std::cout << "    Description: " << description << std::endl;
+
+//            const char* location = icalcomponent_get_location(c);
+//            if (location != nullptr)
+//                std::cout << "    Location: " << location << std::endl;
+
+            char buf[200];
+            char notebuf[2000];
+
+            icaltimetype start = icalcomponent_get_dtstart(c);
+            time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
+            tm *start_tm = gmtime(&start_time_t);
+            if (icaltime_is_date(start)) { // no time, so whole day
+                strftime(buf, sizeof buf, "%FT", start_tm);
+            }
+            else {
+                strftime(buf, sizeof buf, "%FT%TZ", start_tm);
+            }
+            std::cout << "    Start:" << buf << std::endl;
+
+            icaltimetype end = icalcomponent_get_dtend(c);
+            time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
+            tm *end_tm = gmtime(&end_time_t);
+            if (icaltime_is_date(end)) {
+                strftime(buf, sizeof buf, "%FT", end_tm);
+            }
+            else {
+                strftime(buf, sizeof buf, "%FT%TZ", end_tm);
+            }
+            std::cout << "    End:" << buf << std::endl;
+
+if (icaltime_is_date(start) && icaltime_is_date(end))
+    appointment.event = 1;
+else
+    appointment.event = 0;
+
+appointment.begin = *start_tm;
+appointment.end = *end_tm;
+
+//strcpy(buf, summary);
+char buf2[summary.length()];
+strcpy(buf2, summary.c_str());
+
+appointment.alarm         = 0;
+appointment.advance       = 0;
+appointment.advanceUnits  = 0;
+appointment.repeatType         = repeatNone;
+appointment.repeatForever      = 0;
+appointment.repeatEnd.tm_mday  = 0;
+appointment.repeatEnd.tm_mon   = 0;
+appointment.repeatEnd.tm_wday  = 0;
+appointment.repeatFrequency    = 0;
+appointment.repeatWeekstart    = 0;
+appointment.exceptions         = 0;
+appointment.exception          = NULL;
+appointment.description        = buf;
+appointment.note               = NULL;
+
+/*            for(p = icalcomponent_get_first_property(c, ICAL_ANY_PROPERTY); p != 0;
                     p = icalcomponent_get_next_property(c, ICAL_ANY_PROPERTY)) {
 
+                // use the get functions for these
+//                if (icalproperty_isa(p) == ICAL_DTSTART_PROPERTY)
+//                    continue;
+//                if (icalproperty_isa(p) == ICAL_DTEND_PROPERTY)
+//                    continue;
+//                if (icalproperty_isa(p) == ICAL_SUMMARY_PROPERTY)
+//                    continue;
 
                 std::cout << "  " << icalproperty_get_property_name(p) << std::endl;
-                std::cout << "  " << icalproperty_get_value_as_string(p) << std::endl;
+                std::cout << " \\" << icalproperty_get_value_as_string(p) << std::endl;
 
                 icalparameter *p2; // there might not be parameters
 
                 for(p2 = icalproperty_get_first_parameter(p, ICAL_ANY_PARAMETER); p2 != 0;
                         p2 = icalproperty_get_next_parameter(p, ICAL_ANY_PARAMETER)) {
+
 
 
                     //std::cout << "p2" << icalparameter_as_ical_string(p2);
@@ -134,17 +230,17 @@ int main() {
 
                     std::cout << "    " << propname << std::endl;
                     if (val != nullptr) {
-                        std::cout << "    " << val << std::endl;
+                        std::cout << "   \\" << val << std::endl;
                     }
 
                 } // for p2
                 if (p2 != nullptr) icalparameter_free(p2);
 
             } // for p
-            if (p != nullptr) icalproperty_free(p);
+            if (p != nullptr) icalproperty_free(p); */
 
             std::cout << "end component" << std::endl;
-
+//} // kind
         } // for c
         if (c != nullptr) icalcomponent_free(c);
 
