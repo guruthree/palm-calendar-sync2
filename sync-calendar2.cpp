@@ -15,6 +15,30 @@
 #include <libpisock/pi-dlp.h>
 #include <libpisock/pi-socket.h>
 
+#include <libpisock/pi-source.h>
+#include <libpisock/pi-usb.h>
+//#include <usb.h>
+#include <libusb-1.0/libusb.h>
+
+
+// from libusb-compat usbi.h
+struct usb_dev_handle {
+	libusb_device_handle *handle;
+	struct usb_device *device;
+	int last_claimed_interface;
+};
+
+// from libusb libusbi.h
+struct libusb_device_handle {
+	usbi_mutex_t lock;
+	unsigned long claimed_interfaces;
+	struct list_head list;
+	struct libusb_device *dev;
+	int auto_detach_kernel_driver;
+};
+
+
+
 // sync-calendar attempt to read ical file and write to palm pilot
 // if we're really good also try to not repeat any event that already exists
 
@@ -199,23 +223,24 @@ struct Appointment appointment;
             // convert dates and times to start_tm for transfer to palm
             char buf[200];
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
-            tm *start_tm = gmtime(&start_time_t);
+            tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
             if (icaltime_is_date(start)) { // no time, so whole day
-                strftime(buf, sizeof buf, "%FT", start_tm);
+                strftime(buf, sizeof buf, "%FT", &start_tm);
             }
             else {
-                strftime(buf, sizeof buf, "%FT%TZ", start_tm);
+                strftime(buf, sizeof buf, "%FT%TZ", &start_tm);
             }
             std::cout << "    Start: " << buf << std::endl;
 
+
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
-            tm *end_tm = gmtime(&end_time_t);
+            tm end_tm = *gmtime(&end_time_t);
             if (icaltime_is_date(end)) {
-                strftime(buf, sizeof buf, "%FT", end_tm);
+                strftime(buf, sizeof buf, "%FT", &end_tm);
             }
             else {
-                strftime(buf, sizeof buf, "%FT%TZ", end_tm);
+                strftime(buf, sizeof buf, "%FT%TZ", &end_tm);
             }
             std::cout << "    End: " << buf << std::endl;
 
@@ -255,6 +280,7 @@ struct Appointment appointment;
 
             // TODO: delete [] summary_c;
             // TODO: delete [] note_c;
+            // should be fine after the appointment is packed
 
             // store information about this event in the pilot-link struct
             // see pi-datebook.h for details of format
@@ -263,14 +289,16 @@ struct Appointment appointment;
             // TODO: only copy if the appointment doesn't already exist
 
             // TODO: delete all existing appointments
+            // see palm_delete from pilot-xfer.c
+
+
 
             if (icaltime_is_date(start) && icaltime_is_date(end))
                 appointment.event          = 1;
             else
                 appointment.event          = 0;
-            appointment.begin              = *start_tm; // de-reference?
-            appointment.end                = *end_tm;
-appointment.end.tm_hour++; // ?????
+            appointment.begin              = start_tm;
+            appointment.end                = end_tm;
             appointment.alarm              = 0;
             appointment.advance            = 0;
             appointment.advanceUnits       = 0;
@@ -285,6 +313,8 @@ appointment.end.tm_hour++; // ?????
             appointment.exception          = NULL;
             appointment.description        = summary_c;
             appointment.note               = note_c;
+
+// copy to list/vector of Appointment_buf?
 
 
 /*            icalproperty *p; // there will definetely be properties
@@ -469,6 +499,15 @@ int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forw
     }
 
 std::cout << "probably just hanging in libusb now..." << std::endl;
+
+
+pi_socket_t	*ps;
+ps = find_pi_socket(sd);
+pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
+usb_dev_handle *dev = (usb_dev_handle*)data->ref;
+libusb_device_handle *dev_handle = dev->handle;
+struct libusb_context *ctx;
+ctx = dev_handle->ctx;
 
 	if(pi_close(sd) < 0) {
 		std::cout << "error closing socket to plam pilot" << std::endl;
