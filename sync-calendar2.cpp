@@ -18,6 +18,8 @@
 #include <libpisock/pi-source.h>
 #include <libpisock/pi-usb.h>
 //#include <usb.h>
+
+#include <atomic>
 #include <libusb-1.0/libusb.h>
 
 
@@ -28,7 +30,26 @@ struct usb_dev_handle {
 	int last_claimed_interface;
 };
 
+// from libusb thread_posix.h
+typedef pthread_mutex_t usbi_mutex_t;
 // from libusb libusbi.h
+typedef std::atomic_long usbi_atomic_t;
+struct list_head {
+	struct list_head *prev, *next;
+};
+struct libusb_device {
+	usbi_atomic_t refcnt;
+	struct libusb_context *ctx;
+	struct libusb_device *parent_dev;
+	uint8_t bus_number;
+	uint8_t port_number;
+	uint8_t device_address;
+	enum libusb_speed speed;
+	struct list_head list;
+	unsigned long session_data;
+	struct libusb_device_descriptor device_descriptor;
+	usbi_atomic_t attached;
+};
 struct libusb_device_handle {
 	usbi_mutex_t lock;
 	unsigned long claimed_interfaces;
@@ -36,7 +57,8 @@ struct libusb_device_handle {
 	struct libusb_device *dev;
 	int auto_detach_kernel_driver;
 };
-
+#define DEVICE_CTX(dev)		((dev)->ctx)
+#define HANDLE_CTX(handle)	((handle) ? DEVICE_CTX((handle)->dev) : NULL)
 
 
 // sync-calendar attempt to read ical file and write to palm pilot
@@ -498,16 +520,31 @@ int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forw
         return 0;
     }
 
-std::cout << "probably just hanging in libusb now..." << std::endl;
 
+failed = false;
+pi_socket_t	*ps = find_pi_socket(sd);
+if (ps) {
+    pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
+    usb_dev_handle *dev = (usb_dev_handle*)data->ref;
+    libusb_device_handle *dev_handle = dev->handle;
+    //struct libusb_context *ctx = dev_handle->dev->ctx;
+    libusb_context *ctx = HANDLE_CTX(dev_handle);
+    if (ctx) {
+        libusb_unlock_events(ctx);
+    }
+    else {
+        failed = true;
+    }
+}
+else {
+    failed = true;
+}
+if (failed) {
+    std::cout << "probably just hanging in libusb now..." << std::endl;
+}
 
-pi_socket_t	*ps;
-ps = find_pi_socket(sd);
-pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
-usb_dev_handle *dev = (usb_dev_handle*)data->ref;
-libusb_device_handle *dev_handle = dev->handle;
-struct libusb_context *ctx;
-ctx = dev_handle->ctx;
+//libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
+
 
 	if(pi_close(sd) < 0) {
 		std::cout << "error closing socket to plam pilot" << std::endl;

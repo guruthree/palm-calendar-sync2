@@ -10,4 +10,4 @@ project(sync-calendar C CXX)
 add_executable(sync-calendar2 sync-calendar2.cpp)
 
 # https://stackoverflow.com/questions/15657931/linking-curl-in-a-project-using-cmake
-target_link_libraries(sync-calendar2 config++ curl ical pisock usb)
+target_link_libraries(sync-calendar2 config++ curl ical pisock usb usb-1.0)
