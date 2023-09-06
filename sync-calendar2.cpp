@@ -86,8 +86,7 @@ size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmem
 
 // TODO: we'll need to implement argument parsing for specifying:
 // * how to reach the palm pilot
-// * source ical file/url
-// * option to disable ssl cert checks
+// * configuration file
 // * check datebookcfg from previous python project
 int main(int argc, char **argv) {
 
@@ -100,6 +99,7 @@ int main(int argc, char **argv) {
     // configuration settings
     std::string uri, timezone, port;
     int fromyear;
+    bool doalarms, overwrite, insecure;
 
     // the downloaded ical data
     std::string icaldata;
@@ -134,15 +134,30 @@ int main(int argc, char **argv) {
         std::cerr << "No 'FROMYEAR' setting, assuming all." << std::endl;
         fromyear = 0;
     }
+    if (!cfg.lookupValue("OVERWRITE", overwrite)) {
+        std::cerr << "No 'OVERWRITE', assuming true." << std::endl;
+        overwrite = true;
+    }
+    if (!cfg.lookupValue("DOALARMS", doalarms)) {
+        std::cerr << "No 'DOALARMS', assuming false." << std::endl;
+        doalarms = false;
+    }
     if (!cfg.lookupValue("PORT", port)) {
         std::cerr << "No 'PORT' setting in configuration file, failing." << std::endl;
         return(EXIT_FAILURE);
+    }
+    if (!cfg.lookupValue("INSECURE", insecure)) {
+        std::cerr << "No 'INSECURE', assuming false." << std::endl;
+        insecure = false;
     }
 
     std::cout << "uri: " << uri << std::endl;
     std::cout << "timezone: " << timezone << std::endl;
     std::cout << "fromyear: " << fromyear << std::endl;
-    std::cout << "port: " << port << std::endl << std::endl;
+    std::cout << "overwrite: " << overwrite << std::endl;
+    std::cout << "doalarms: " << doalarms << std::endl;
+    std::cout << "port: " << port << std::endl;
+    std::cout << "insecure: " << insecure << std::endl << std::endl;
 
 
     /** read in calendar data using libcurl **/
@@ -154,8 +169,10 @@ int main(int argc, char **argv) {
         curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
 
         // disable some SSL checks, reduced security
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        if (insecure) {
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
 
         // cache the CA cert bundle in memory for a week
         curl_easy_setopt(curl, CURLOPT_CA_CACHE_TIMEOUT, 604800L);
@@ -211,7 +228,7 @@ int main(int argc, char **argv) {
     // remove errors (which also includes empty descriptions, locations, and the like) 
     icalcomponent_strip_errors(components);
 
-struct Appointment appointment;
+    std::vector<pi_buffer_t*> Appointment_bufs;
 
     // if there is some valid ical data to work through
     if (components != nullptr) {
@@ -272,8 +289,7 @@ struct Appointment appointment;
                 location = location_c;
             }
             else {
-                location = "None";
-//                location = "";
+                location = "";
             }
 
             std::string description;
@@ -287,18 +303,82 @@ struct Appointment appointment;
 
             // merge location and description into the note (palmos5 has a location but pilot-link doesn't support it)
             // TODO: smarter here, don't add location bit if no location, and nothing at all if both blank
-            std::string note = "Location: " + location;
+            std::string note;
+            if (location.length() > 0) {
+                note = note + "Location: " + location;
+            }
             if (description.length() > 0) {
-                note = note + "\n\n" + description;
+                if (note.length() > 0) {
+                    note = note + "\n\n";
+                }
+                note = note + description;
             }
             std::cout << "    Note: [[" << note << "]]" << std::endl;
+
+
+
+
+
+int shortest_alarm = 9999989;
+int numalarms = icalcomponent_count_components(c, ICAL_VALARM_COMPONENT);
+if (numalarms > 0 && doalarms) {
+//    std::cout << "ALARMS: " << numalarms << std::endl;
+
+    icalcomponent *c2;// = icalcomponent_get_next_component(c, ICAL_VALARM_COMPONENT);
+
+
+        for(c2 = icalcomponent_get_first_component(c, ICAL_VALARM_COMPONENT); c2 != 0;
+                c2 = icalcomponent_get_next_component(c, ICAL_VALARM_COMPONENT)) {
+
+// this is ignoring absolute arlarms with TRIGGER;VALUE=DATE-TIME
+
+struct icaltriggertype trigger = icalproperty_get_trigger(icalcomponent_get_first_property(c2, ICAL_TRIGGER_PROPERTY));
+
+
+
+if (trigger.duration.is_neg == 1) { // alarms only occur beforehand
+
+int advance = (trigger.duration.weeks * 7 * 86400 + trigger.duration.days * 86400 + trigger.duration.hours * 3600 + trigger.duration.minutes * 60 + trigger.duration.seconds) / 60;
+
+
+if (advance < shortest_alarm)
+    shortest_alarm = advance;
+
+}
+
+
+//std::cout << advance << " minutes " << std::endl;
+
+//std::cout << trigger.time.minute << std::endl;
+//std::cout << trigger.duration.minutes << " minutes " << std::endl;
+
+
+//std::cout << trigger.duration << std::endl;
+
+        } // c2
+
+
+} // numalarms
+
+if (shortest_alarm != 9999989) {
+    std::cout << "    Alarm: " << shortest_alarm << " minutes before" << std::endl;
+}
+else {
+    shortest_alarm = 0;
+}
+
+
+
 
             // an annoying round about route from const char* to std::string to char*
             // https://stackoverflow.com/questions/7352099/stdstring-to-char
             char *summary_c = new char[summary.length()+1];
             strcpy(summary_c, summary.c_str());
-            char *note_c = new char[note.length()+1];
-            strcpy(note_c, note.c_str());
+            char *note_c = nullptr;
+            if (note.length() > 0) {
+                note_c = new char[note.length()+1];
+                strcpy(note_c, note.c_str());
+            }
 
             // TODO: delete [] summary_c;
             // TODO: delete [] note_c;
@@ -306,7 +386,7 @@ struct Appointment appointment;
 
             // store information about this event in the pilot-link struct
             // see pi-datebook.h for details of format
-//            struct Appointment appointment;
+            Appointment appointment;
 
             // TODO: only copy if the appointment doesn't already exist
 
@@ -321,9 +401,16 @@ struct Appointment appointment;
                 appointment.event          = 0;
             appointment.begin              = start_tm;
             appointment.end                = end_tm;
-            appointment.alarm              = 0;
-            appointment.advance            = 0;
-            appointment.advanceUnits       = 0;
+            if (doalarms == true && shortest_alarm != 0) {
+                appointment.alarm              = 1;
+                appointment.advance            = shortest_alarm;
+            }
+            else {
+                appointment.alarm              = 0;
+                appointment.advance            = 0;
+                // setting advance here doesn't work, we can't store the alarm if it's not enabled
+            }
+            appointment.advanceUnits       = 0; // 0 - minutes, 1 - hours, 2 - days
             appointment.repeatType         = repeatNone;
             appointment.repeatForever      = 0;
             appointment.repeatEnd.tm_mday  = 0;
@@ -336,8 +423,19 @@ struct Appointment appointment;
             appointment.description        = summary_c;
             appointment.note               = note_c;
 
-// copy to list/vector of Appointment_buf?
+	        Appointment_bufs.push_back(pi_buffer_new (0xffff));
+			pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
 
+            // free_Appointment also frees string pointers
+//            free_Appointment(&appointment); // shouldn't be needed since it wasn't created via malloc or new function?
+            if (summary_c != nullptr) {
+                delete [] summary_c; // created with new, probably should free...
+            }
+            if (note_c != nullptr)
+                delete [] note_c;
+
+            // TODO: alarm
+            // TODO: repetition
 
 /*            icalproperty *p; // there will definetely be properties
 
@@ -390,9 +488,10 @@ struct Appointment appointment;
                 if (p2 != nullptr) icalparameter_free(p2);
 
             } // for p
-            if (p != nullptr) icalproperty_free(p); */
+            if (p != nullptr) icalproperty_free(p);
 
             std::cout << "End of event" << std::endl;
+*/
 
         } // for c
         if (c != nullptr) icalcomponent_free(c);
@@ -400,6 +499,8 @@ struct Appointment appointment;
         icalcomponent_free(components); // already not null by definition inside this loop
 
     } // if components
+
+
 
 //return 0;
 
@@ -409,8 +510,8 @@ struct Appointment appointment;
 	int sd = -1;
 	int result;
 
-	pi_buffer_t *Appointment_buf;
-	Appointment_buf 	= pi_buffer_new (0xffff);
+//	pi_buffer_t *Appointment_buf;
+//	Appointment_buf 	= pi_buffer_new (0xffff);
 
 
 	struct 	PilotUser User;
@@ -478,6 +579,32 @@ int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forw
 	dlp_ReadUserInfo(sd, &User);
 	dlp_OpenConduit(sd);
 
+/*if (overwrite) {
+	struct DBInfo	info;
+
+#define pi_mktag(c1,c2,c3,c4) (((c1)<<24)|((c2)<<16)|((c3)<<8)|(c4))
+#define dbname "DatebookDB"
+
+	dlp_FindDBInfo(sd, 0, 0, dbname, 0, 0, &info);
+
+	printf("Deleting '%s'... ", dbname);
+	if (dlp_DeleteDB(sd, 0, dbname) >= 0)
+	{
+		if (info.type == pi_mktag('b', 'o', 'o', 't'))
+		{
+			printf(" (rebooting afterwards) ");
+		}
+		printf("OK\n");
+	} else {
+		printf("Failed, unable to delete database\n");
+	}
+	fflush(stdout);
+
+
+
+}*/
+
+
 	/* Open the Datebook's database, store access handle in db */
 	if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
 		fprintf(stderr,"   ERROR: Unable to open DatebookDB on Palm\n");
@@ -487,14 +614,27 @@ int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forw
         return 0;
 	}
 
+if (overwrite) {
+    // delete ALL records
+	result = dlp_DeleteRecord (sd, db, 1, 0);
+}
+
 
 /// data transfer bit?
-			pack_Appointment(&appointment, Appointment_buf, datebook_v1);
+			//pack_Appointment(&appointment, Appointment_buf, datebook_v1);
 
+for (int i = 0; i < Appointment_bufs.size(); i++) {
 			dlp_WriteRecord(sd, db, 0, 0, 0,
-					Appointment_buf->data,
-					Appointment_buf->used, 0);
+					Appointment_bufs[i]->data,
+					Appointment_bufs[i]->used, 0);
+pi_buffer_free(Appointment_bufs[i]);
+}
+//			dlp_WriteRecord(sd, db, 0, 0, 0,
+//					Appointment_buf->data,
+//					Appointment_buf->used, 0);
 
+
+// need to free each buffer after it's written
 
 
 	/* Close the database */
@@ -540,7 +680,7 @@ else {
     failed = true;
 }
 if (failed) {
-    std::cout << "probably just hanging in libusb now..." << std::endl;
+    std::cout << "Probably hanging on a libusb race condition now..." << std::endl;
 }
 
 //libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
