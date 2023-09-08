@@ -1,8 +1,10 @@
 // TODO: copyright
 
+// sync-calendar attempt to read ical file and write to palm pilot
+// if we're really good also try to not repeat any event that already exists
+// note not fully ical complient, but should work with google calendar exports
+
 #include <cstring>
-//#include <cstdlib>
-//#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,153 +16,61 @@
 #include <libpisock/pi-datebook.h>
 #include <libpisock/pi-dlp.h>
 #include <libpisock/pi-socket.h>
-
 #include <libpisock/pi-source.h>
 #include <libpisock/pi-usb.h>
-//#include <usb.h>
 
-#include <atomic>
-#include <libusb-1.0/libusb.h>
-
-
-// from libusb-compat usbi.h
-struct usb_dev_handle {
-	libusb_device_handle *handle;
-	struct usb_device *device;
-	int last_claimed_interface;
-};
-
-// from libusb thread_posix.h
-typedef pthread_mutex_t usbi_mutex_t;
-// from libusb libusbi.h
-typedef std::atomic_long usbi_atomic_t;
-struct list_head {
-	struct list_head *prev, *next;
-};
-struct libusb_device {
-	usbi_atomic_t refcnt;
-	struct libusb_context *ctx;
-	struct libusb_device *parent_dev;
-	uint8_t bus_number;
-	uint8_t port_number;
-	uint8_t device_address;
-	enum libusb_speed speed;
-	struct list_head list;
-	unsigned long session_data;
-	struct libusb_device_descriptor device_descriptor;
-	usbi_atomic_t attached;
-};
-struct libusb_device_handle {
-	usbi_mutex_t lock;
-	unsigned long claimed_interfaces;
-	struct list_head list;
-	struct libusb_device *dev;
-	int auto_detach_kernel_driver;
-};
-#define DEVICE_CTX(dev)		((dev)->ctx)
-#define HANDLE_CTX(handle)	((handle) ? DEVICE_CTX((handle)->dev) : NULL)
-
-
-// sync-calendar attempt to read ical file and write to palm pilot
-// if we're really good also try to not repeat any event that already exists
-
-using namespace libconfig;
-
-// callback for having curl store output in a std::string
-// https://stackoverflow.com/questions/2329571/c-libcurl-get-output-into-a-string
-size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmemb, std::string *s)
-{
-    size_t newLength = size*nmemb;
-    try
-    {
-        s->append((char*)contents, newLength);
-    }
-    catch(std::bad_alloc &e)
-    {
-        //handle memory problem
-        return 0;
-    }
-    return newLength;
-}
-
+#include "libusb.h"
+#include "sync-calendar2.h"
 
 // TODO: we'll need to implement argument parsing for specifying:
-// * how to reach the palm pilot
+// * palm pilot port
 // * configuration file
-// * check datebookcfg from previous python project
+// man 3 getopt
+// TODO: adding only new events
+// TODO: read plam only configuration option (vs read/write the palm)
+// TODO: quit nicely catching errors and whatnot (try catch finally?)
 int main(int argc, char **argv) {
 
-
-    /** variables **/
-
-    // use to mark exiting on an error
-    bool failed = false;
-
-    // configuration settings
-    std::string uri, timezone, port;
-    int fromyear;
-    bool doalarms, overwrite, insecure;
-
-    // the downloaded ical data
-    std::string icaldata;
-
-
     /** read in configuration settings using libconfig **/
-    Config cfg;
-    try
-    {
+
+    // configuration settings & defaults
+    std::string uri, port, timezone("UTC");
+    int fromyear = 0;
+    bool dohotsync = true, doalarms = false, overwrite = true, insecure = false;
+
+    libconfig::Config cfg;
+    cfg.setOption(libconfig::Config::OptionAutoConvert, true); // float to int and viceversa?
+    try {
         cfg.readFile("datebook.cfg");
     }
-    catch(const FileIOException &fioex)
-    {
+    catch (const libconfig::FileIOException &fioex) {
         std::cerr << "I/O error while reading file." << std::endl;
-        return(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
-    catch(const ParseException &pex)
-    {
+    catch (const libconfig::ParseException &pex) {
         std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
     }
 
-    // there's probably a nicer way to duplicate this code with templates?
-    if (!cfg.lookupValue("URI", uri)) {
-        std::cerr << "No 'URI' setting in configuration file, failing." << std::endl;
-        return(EXIT_FAILURE);
-    }
-    if (!cfg.lookupValue("TIMEZONE", timezone)) {
-        std::cerr << "No 'TIMEZONE' setting, assuming UTC." << std::endl;
-        timezone = "UTC";
-    }
-    if (!cfg.lookupValue("FROMYEAR", fromyear)) {
-        std::cerr << "No 'FROMYEAR' setting, assuming all." << std::endl;
-        fromyear = 0;
-    }
-    if (!cfg.lookupValue("OVERWRITE", overwrite)) {
-        std::cerr << "No 'OVERWRITE', assuming true." << std::endl;
-        overwrite = true;
-    }
-    if (!cfg.lookupValue("DOALARMS", doalarms)) {
-        std::cerr << "No 'DOALARMS', assuming false." << std::endl;
-        doalarms = false;
-    }
-    if (!cfg.lookupValue("PORT", port)) {
-        std::cerr << "No 'PORT' setting in configuration file, failing." << std::endl;
-        return(EXIT_FAILURE);
-    }
-    if (!cfg.lookupValue("INSECURE", insecure)) {
-        std::cerr << "No 'INSECURE', assuming false." << std::endl;
-        insecure = false;
-    }
-
-    std::cout << "uri: " << uri << std::endl;
-    std::cout << "timezone: " << timezone << std::endl;
-    std::cout << "fromyear: " << fromyear << std::endl;
-    std::cout << "overwrite: " << overwrite << std::endl;
-    std::cout << "doalarms: " << doalarms << std::endl;
-    std::cout << "port: " << port << std::endl;
-    std::cout << "insecure: " << insecure << std::endl << std::endl;
+    // use macros to tidy up reading config options
+    // first in caps config item (will be a string), second variable name
+    FAIL_CFG(URI, uri)
+    FAIL_CFG(PORT, port)
+    NON_FAIL_CFG(DOHOTSYNC, dohotsync)
+    NON_FAIL_CFG(TIMEZONE, timezone)
+    NON_FAIL_CFG(FROMYEAR, fromyear)
+    NON_FAIL_CFG(OVERWRITE, overwrite)
+    NON_FAIL_CFG(DOALARMS, doalarms)
+    NON_FAIL_CFG(INSECURE, insecure)
+    std::cout << std::endl;
 
 
     /** read in calendar data using libcurl **/
+
+    // use to mark exiting on an error
+    bool failed = false;
+    // the downloaded ical data
+    std::string icaldata;
+
     CURL *curl;
     CURLcode res;
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -185,17 +95,17 @@ int main(int argc, char **argv) {
         res = curl_easy_perform(curl);
 
         // check for errors
-        if(res != CURLE_OK) {
+        if (res != CURLE_OK) {
             std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
             failed = true;
-            // TODO: handle this nicely
         }
-
-        long http_code = 0;
-        curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
-        if (http_code != 200) {
-            std::cerr << "error fetching URI, http response code " << http_code << std::endl;
-            failed = true;
+        else {
+            long http_code = 0;
+            curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
+            if (http_code != 200) {
+                std::cerr << "error fetching URI, http response code " << http_code << std::endl;
+                failed = true;
+            }
         }
 
         // always cleanup!
@@ -208,10 +118,13 @@ int main(int argc, char **argv) {
     curl_global_cleanup();
  
     if (failed) {
-        // something went wrong along the way, exist
+        // something went wrong along the way, exit
         std::cerr << "exiting after error" << std::endl;
-        return 0;
+        return EXIT_FAILURE;
     }
+
+    
+    // TODO: read existing calendar events off of palm pilot
 
 
     /** parse calendar using libical **/
@@ -221,6 +134,14 @@ int main(int argc, char **argv) {
     // opening BEGIN tag which contains PROPERTY tags that then have VALUES (the main
     // thing in that tag, and then PARAMETERS which are kind of like HTML attributes,
     // adding extra information about the PARAMETER
+
+    // https://github.com/libical/libical/blob/master/doc/UsingLibical.md
+    // https://libical.github.io/libical/apidocs/icalcomponent_8h.html
+    // https://libical.github.io/libical/apidocs/icalproperty_8h.html
+    // https://libical.github.io/libical/apidocs/icalparameter_8h.html
+
+    // store all of the calendar events packed ready for copying to the palm
+    std::vector<pi_buffer_t*> Appointment_bufs;
     
     // parse the string into a series of components to iterate through
     icalcomponent* components = icalparser_parse_string(icaldata.c_str());
@@ -228,19 +149,15 @@ int main(int argc, char **argv) {
     // remove errors (which also includes empty descriptions, locations, and the like) 
     icalcomponent_strip_errors(components);
 
-    std::vector<pi_buffer_t*> Appointment_bufs;
-
     // if there is some valid ical data to work through
     if (components != nullptr) {
 
         // the specific component we're on in our iteration
         icalcomponent *c;
 
-        // TODO: google calendar output might have some time-zone definitions at the
-        // start via X-LIC-LOCATION if we accept ICAL_ANY_COMPONENT
+        // we're only interested in calendar events, iterate through them
         for(c = icalcomponent_get_first_component(components, ICAL_VEVENT_COMPONENT); c != 0;
                 c = icalcomponent_get_next_component(components, ICAL_VEVENT_COMPONENT)) {
-
 
             // palm only has start time, end time, alarm, repeat, description, and note
             // so we only need to extract those things from the component if they're there
@@ -249,8 +166,13 @@ int main(int argc, char **argv) {
 
             std::cout << "Processing event" << std::endl;
 
+
+            /* date time description essentials */
+
             std::string summary(icalcomponent_get_summary(c));
             std::cout << "    Summary: " << summary << std::endl;
+
+            // TODO: don't skip if it's repeating until past from year
 
             // skip older entries
             icaltimetype start = icalcomponent_get_dtstart(c);
@@ -259,30 +181,26 @@ int main(int argc, char **argv) {
                 continue;
             }
 
+            // https://libical.github.io/libical/apidocs/icaltime_8h.html
+
+            // TODO: timezone conversion to localtime
+
             // convert dates and times to start_tm for transfer to palm
             char buf[200];
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
             tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
-            if (icaltime_is_date(start)) { // no time, so whole day
-                strftime(buf, sizeof buf, "%FT", &start_tm);
-            }
-            else {
-                strftime(buf, sizeof buf, "%FT%TZ", &start_tm);
-            }
+            TIME_STRING(start)
             std::cout << "    Start: " << buf << std::endl;
-
 
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
             tm end_tm = *gmtime(&end_time_t);
-            if (icaltime_is_date(end)) {
-                strftime(buf, sizeof buf, "%FT", &end_tm);
-            }
-            else {
-                strftime(buf, sizeof buf, "%FT%TZ", &end_tm);
-            }
+            TIME_STRING(end)
             std::cout << "    End: " << buf << std::endl;
 
+            // get the location and descriptions and merge for an event attached note
+            // there is some tedious conversion from char to const char to string and around things
+            // (probably a side effect of mixing C and C++)
             std::string location;
             const char* location_c = icalcomponent_get_location(c);
             if (location_c != nullptr) {
@@ -301,8 +219,8 @@ int main(int argc, char **argv) {
                 description = "";
             }
 
-            // merge location and description into the note (palmos5 has a location but pilot-link doesn't support it)
-            // TODO: smarter here, don't add location bit if no location, and nothing at all if both blank
+            // merge location and description into the note
+            // (palmos5 has a location but pilot-link doesn't support it - different database format?)
             std::string note;
             if (location.length() > 0) {
                 note = note + "Location: " + location;
@@ -316,56 +234,216 @@ int main(int argc, char **argv) {
             std::cout << "    Note: [[" << note << "]]" << std::endl;
 
 
+            /* what about an alarm */
+
+            // palm os only supports one alarm, so find the nearest one and add that
+            int shortest_alarm = 9999989; // default value to c.f. if an alarm has been set
+            int numalarms = icalcomponent_count_components(c, ICAL_VALARM_COMPONENT);
+            if (numalarms > 0 && doalarms) {
+
+                // a VALARM is a sub-sub-component
+                icalcomponent *c2;
+
+                for(c2 = icalcomponent_get_first_component(c, ICAL_VALARM_COMPONENT); c2 != 0;
+                        c2 = icalcomponent_get_next_component(c, ICAL_VALARM_COMPONENT)) {
+
+                    // this is ignoring absolute alarms with TRIGGER;VALUE=DATE-TIME
+                    // also assuming there's only ever one TRIGGER property
+                    icaltriggertype trigger = \
+                        icalproperty_get_trigger(icalcomponent_get_first_property(c2, ICAL_TRIGGER_PROPERTY));
+
+                    if (trigger.duration.is_neg == 1) { // alarms only occur beforehand
+
+                        // how far in advance is the alarm? we only work in minutes
+                        int advance = (trigger.duration.weeks * 7 * 86400 + \
+                                       trigger.duration.days * 86400 + \
+                                       trigger.duration.hours * 3600 + \
+                                       trigger.duration.minutes * 60 + 
+                                       trigger.duration.seconds) / 60;
+                        if (advance < shortest_alarm) {
+                            shortest_alarm = advance;
+                        }
+                    }
+                } // c2
+            } // numalarms
+
+            if (shortest_alarm != 9999989) {
+                std::cout << "    Alarm: " << shortest_alarm << " minutes before" << std::endl;
+            }
+            else {
+                shortest_alarm = 0;
+            }
 
 
-
-int shortest_alarm = 9999989;
-int numalarms = icalcomponent_count_components(c, ICAL_VALARM_COMPONENT);
-if (numalarms > 0 && doalarms) {
-//    std::cout << "ALARMS: " << numalarms << std::endl;
-
-    icalcomponent *c2;// = icalcomponent_get_next_component(c, ICAL_VALARM_COMPONENT);
+            /* repat stuff, repeat stuff */
 
 
-        for(c2 = icalcomponent_get_first_component(c, ICAL_VALARM_COMPONENT); c2 != 0;
-                c2 = icalcomponent_get_next_component(c, ICAL_VALARM_COMPONENT)) {
+// TODO: repetition
 
-// this is ignoring absolute arlarms with TRIGGER;VALUE=DATE-TIME
+// components:
+//     RRULE repeating sets
+//     EXDATE dates in the set skipped
+//       appears to be stored as a tm struct with year/month/day only
 
-struct icaltriggertype trigger = icalproperty_get_trigger(icalcomponent_get_first_property(c2, ICAL_TRIGGER_PROPERTY));
+//     RDATE one off repeating events that were moved? these appear to present as a normal
+//     event so we can probably just ignore them
 
+// https://libical.github.io/libical/apidocs/icalrecur_8h.html
+// https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
+// https://freetools.textmagic.com/rrule-generator
 
+// X INTERVAL => repeatFrequency
+// X UNTIL => repeatEnd, repeatForever
+//   COUNT => repeatEnd
+// X WKST => repeatWeekstart
+//   BYMONTHDAY => repeatDay
+//   BYDAY => repeatDays
+//   FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
+//   EXDATE => exception, exceptions
 
-if (trigger.duration.is_neg == 1) { // alarms only occur beforehand
+tm repeatEnd;
+repeatEnd.tm_mday  = 0;
+repeatEnd.tm_mon   = 0;
+repeatEnd.tm_wday  = 0;
+int repeatForever = 0;
+int repeatFrequency = 0;
+repeatTypes repeatType = repeatNone; // default no repeat
+int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
+// appointment.exceptions         = 0;
+// appointment.exception          = NULL;
 
-int advance = (trigger.duration.weeks * 7 * 86400 + trigger.duration.days * 86400 + trigger.duration.hours * 3600 + trigger.duration.minutes * 60 + trigger.duration.seconds) / 60;
+// this assumes there's only ever one RRULE property
+icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY); // move this up for checking if it's an old repeating
 
-
-if (advance < shortest_alarm)
-    shortest_alarm = advance;
-
-}
-
-
-//std::cout << advance << " minutes " << std::endl;
-
-//std::cout << trigger.time.minute << std::endl;
-//std::cout << trigger.duration.minutes << " minutes " << std::endl;
-
-
-//std::cout << trigger.duration << std::endl;
-
-        } // c2
-
-
-} // numalarms
-
-if (shortest_alarm != 9999989) {
-    std::cout << "    Alarm: " << shortest_alarm << " minutes before" << std::endl;
+if (rrule == nullptr) {
+//    std::cout << "no recurrence" << std::endl;
 }
 else {
-    shortest_alarm = 0;
-}
+    std::cout << "recurrence" << std::endl;
+
+    // ics2csv4pdb.py has some logic for the ical => palm conversion already
+
+    icalrecurrencetype recur = icalproperty_get_rrule(rrule);
+
+    // we're assuming UNTIL and COUNT are mutually exclusive
+    if (recur.until.year != 0) {
+        // there's an until date, use that
+//TODO: std::chrono ?
+        time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
+        repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
+    }
+    else if (recur.count == 0) {
+        // no until date, for the moment assume repeating forever
+        repeatForever = 1;
+    }
+    else {
+        //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
+    }
+
+    repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
+
+    // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
+    switch (recur.week_start) {
+        case ICAL_SUNDAY_WEEKDAY:
+            repeatWeekstart = 0;
+            break;
+        case ICAL_MONDAY_WEEKDAY:
+            repeatWeekstart = 1;
+            break;
+        case ICAL_TUESDAY_WEEKDAY:
+            repeatWeekstart = 2;
+            break;
+        case ICAL_WEDNESDAY_WEEKDAY:
+            repeatWeekstart = 3;
+            break;
+        case ICAL_THURSDAY_WEEKDAY:
+            repeatWeekstart = 4;
+            break;
+        case ICAL_FRIDAY_WEEKDAY:
+            repeatWeekstart = 5;
+            break;
+        case ICAL_SATURDAY_WEEKDAY :
+            repeatWeekstart = 6;
+            break;
+        default:
+            break;
+    }
+
+std::cout << recur.by_month_day[2] << std::endl;
+
+    icalrecurrencetype_frequency freq = recur.freq;
+    if (freq == ICAL_NO_RECURRENCE || 
+            freq == ICAL_SECONDLY_RECURRENCE || 
+            freq == ICAL_MINUTELY_RECURRENCE || 
+            freq == ICAL_HOURLY_RECURRENCE) {
+        repeatFrequency = repeatNone;
+    }
+    else if (freq == ICAL_DAILY_RECURRENCE) {
+        repeatFrequency = repeatDaily;
+    }
+    else if (freq == ICAL_WEEKLY_RECURRENCE) {
+        repeatFrequency = repeatWeekly; // repeatDays from BYDAY
+    }
+    else if (freq == ICAL_MONTHLY_RECURRENCE) {
+        // TODO: figure out how we tell these apart
+//        repeatFrequency = repeatMonthlyByDay; // nothing extra to set
+//        repeatFrequency = repeatMonthlyByDate; // need to set repeatDay from BYDAY
+    }
+    else if (freq == ICAL_YEARLY_RECURRENCE) {
+        repeatFrequency = repeatYearly;
+    }
+    else {
+        std::cout << "    Unknown repeat frequency" << std::endl;
+    }
+
+    std::cout << icalrecurrencetype_as_string(&recur) << std::endl;
+
+/*for (rp = icalproperty_get_first_parameter(rrule, ICAL_ANY_PARAMETER); rp != 0;
+        rp = icalproperty_get_next_parameter(rrule, ICAL_ANY_PARAMETER)) {
+
+
+    std::cout << "recurrence" << std::endl;
+
+//    std::cout << "rp" << icalparameter_as_ical_string(rp);
+    const char* propname = nullptr;
+    const char* val = nullptr;
+    icalparameter_kind paramkind = icalparameter_isa(rp);
+
+    if (paramkind == ICAL_X_PARAMETER) {
+        propname = icalparameter_get_xname(rp);
+        val = icalparameter_get_xvalue(rp);
+    }
+    else if (paramkind == ICAL_IANA_PARAMETER) {
+        propname = icalparameter_get_iana_name(rp);
+        val = icalparameter_get_iana_value(rp);
+    }
+    else if (paramkind != ICAL_NO_PARAMETER) {
+        propname = icalparameter_kind_to_string(paramkind);
+        val = icalproperty_get_parameter_as_string(rrule, propname);
+    }
+
+
+    std::cout << "    " << propname << std::endl;
+    if (val != nullptr) {
+        std::cout << "   \\" << val << std::endl;
+    }
+
+} // for rp */
+
+
+
+} // else reccurrence
+
+
+
+
+
+//struct icalrecurrencetype recur;
+//struct icaltimetype dtstart;
+ 
+//rrule = ;
+//recur = icalproperty_get_rrule(rrule);
+
 
 
 
@@ -375,25 +453,16 @@ else {
             char *summary_c = new char[summary.length()+1];
             strcpy(summary_c, summary.c_str());
             char *note_c = nullptr;
-            if (note.length() > 0) {
+            if (note.length() > 0) { // note might be empty
                 note_c = new char[note.length()+1];
                 strcpy(note_c, note.c_str());
             }
-
-            // TODO: delete [] summary_c;
-            // TODO: delete [] note_c;
-            // should be fine after the appointment is packed
 
             // store information about this event in the pilot-link struct
             // see pi-datebook.h for details of format
             Appointment appointment;
 
             // TODO: only copy if the appointment doesn't already exist
-
-            // TODO: delete all existing appointments
-            // see palm_delete from pilot-xfer.c
-
-
 
             if (icaltime_is_date(start) && icaltime_is_date(end))
                 appointment.event          = 1;
@@ -410,22 +479,23 @@ else {
                 appointment.advance            = 0;
                 // setting advance here doesn't work, we can't store the alarm if it's not enabled
             }
-            appointment.advanceUnits       = 0; // 0 - minutes, 1 - hours, 2 - days
-            appointment.repeatType         = repeatNone;
-            appointment.repeatForever      = 0;
-            appointment.repeatEnd.tm_mday  = 0;
-            appointment.repeatEnd.tm_mon   = 0;
-            appointment.repeatEnd.tm_wday  = 0;
-            appointment.repeatFrequency    = 0;
-            appointment.repeatWeekstart    = 0;
-            appointment.exceptions         = 0;
+            appointment.advanceUnits       = advMinutes;
+            appointment.repeatType         = repeatType;
+            appointment.repeatForever      = repeatForever;
+            appointment.repeatEnd.tm_mday  = repeatEnd.tm_mday;
+            appointment.repeatEnd.tm_mon   = repeatEnd.tm_mon;
+            appointment.repeatEnd.tm_wday  = repeatEnd.tm_wday;
+            appointment.repeatFrequency    = repeatFrequency;
+            appointment.repeatWeekstart    = repeatWeekstart;
+            appointment.exceptions         = 0; // TODO: exceptions
             appointment.exception          = NULL;
             appointment.description        = summary_c;
             appointment.note               = note_c;
 
-	        Appointment_bufs.push_back(pi_buffer_new (0xffff));
-			pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
+            Appointment_bufs.push_back(pi_buffer_new (0xffff));
+            pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
 
+            // should be fine to delete some things after the appointment is packed
             // free_Appointment also frees string pointers
 //            free_Appointment(&appointment); // shouldn't be needed since it wasn't created via malloc or new function?
             if (summary_c != nullptr) {
@@ -434,8 +504,6 @@ else {
             if (note_c != nullptr)
                 delete [] note_c;
 
-            // TODO: alarm
-            // TODO: repetition
 
 /*            icalproperty *p; // there will definetely be properties
 
@@ -501,194 +569,140 @@ else {
     } // if components
 
 
-
-//return 0;
-
-
-
-    int db; 
-	int sd = -1;
-	int result;
-
-//	pi_buffer_t *Appointment_buf;
-//	Appointment_buf 	= pi_buffer_new (0xffff);
-
-
-	struct 	PilotUser User;
-
-int plu_quiet = 0; // don't surpress some output
-int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forwever with 0?
-
-// from pilot-link userland.c
-	struct  SysInfo sys_info;
-
-	if ((sd = pi_socket(PI_AF_PILOT,
-			PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
-		fprintf(stderr, "\n   Unable to create socket '%s'\n", port.c_str());
-		return -1;
-	}
-
-	result = pi_bind(sd, port.c_str());
-
-	if (result < 0) {
-		fprintf(stderr, "   Unable to bind to port: %s\n"
-				"   Please use --help for more information\n\n",
-				port.c_str());
-		return result;
-	}
-
-	if (!plu_quiet && isatty(fileno(stdout))) {
-		printf("\n   Listening for incoming connection on %s... ",
-			port.c_str());
-		fflush(stdout);
-	}
-
-	if (pi_listen(sd, 1) < 0) {
-		fprintf(stderr, "\n   Error listening on %s\n", port.c_str());
-		pi_close(sd);
-		return -1;
-	}
-
-	sd = pi_accept_to(sd, 0, 0, plu_timeout);
-	if (sd < 0) {
-		fprintf(stderr, "\n   Error accepting data on %s\n", port.c_str());
-		pi_close(sd);
-		return -1;
-	}
-
-	if (!plu_quiet && isatty(fileno(stdout))) {
-		printf("connected!\n\n");
-	}
-
-	if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
-		fprintf(stderr, "\n   Error read system info on %s\n", port.c_str());
-		pi_close(sd);
-		return -1;
-	}
-
-	dlp_OpenConduit(sd);
-
-    if (sd < 0)
-		return 0;
-
-	if (dlp_OpenConduit(sd) < 0) {
-	    pi_close(sd);
-        return 0;
+    if (!dohotsync) {
+        return EXIT_SUCCESS;
     }
 
-	dlp_ReadUserInfo(sd, &User);
-	dlp_OpenConduit(sd);
 
-/*if (overwrite) {
-	struct DBInfo	info;
+    /** palm pilot communication **/
 
-#define pi_mktag(c1,c2,c3,c4) (((c1)<<24)|((c2)<<16)|((c3)<<8)|(c4))
-#define dbname "DatebookDB"
+    // TODO: separate out into its own file/function? (should make reading easier?)
+    // TODO: check what all the pilot-link functions return and what are fatal and we need to exit on etc
 
-	dlp_FindDBInfo(sd, 0, 0, dbname, 0, 0, &info);
+    int db; // handle to the database
+    int sd = -1; // socket descriptor (like fid?)
+    int result;
 
-	printf("Deleting '%s'... ", dbname);
-	if (dlp_DeleteDB(sd, 0, dbname) >= 0)
-	{
-		if (info.type == pi_mktag('b', 'o', 'o', 't'))
-		{
-			printf(" (rebooting afterwards) ");
-		}
-		printf("OK\n");
-	} else {
-		printf("Failed, unable to delete database\n");
-	}
-	fflush(stdout);
+    PilotUser User;
 
+    int plu_quiet = 0; // don't surpress some output
+    int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forwever with 0?
 
+    // from pilot-link userland.c
+    SysInfo sys_info;
 
-}*/
+    if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
+        fprintf(stderr, "\n   Unable to create socket '%s'\n", port.c_str());
+        return EXIT_FAILURE;
+    }
 
+    if (pi_bind(sd, port.c_str()) < 0) {
+        fprintf(stderr, "   Unable to bind to port: %s\n", port.c_str());
+        return EXIT_FAILURE;
+    }
 
-	/* Open the Datebook's database, store access handle in db */
-	if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
-		fprintf(stderr,"   ERROR: Unable to open DatebookDB on Palm\n");
-		dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
+    if (!plu_quiet && isatty(fileno(stdout))) {
+        printf("\n   Listening for incoming connection on %s... ", port.c_str());
+        fflush(stdout);
+    }
+
+    if (pi_listen(sd, 1) < 0) {
+        fprintf(stderr, "\n   Error listening on %s\n", port.c_str());
+        pi_close(sd);
+        return EXIT_FAILURE;
+    }
+
+    sd = pi_accept_to(sd, 0, 0, plu_timeout);
+    if (sd < 0) {
+        fprintf(stderr, "\n   Error accepting data on %s\n", port.c_str());
+        pi_close(sd);
+        return -1;
+    }
+
+    if (!plu_quiet && isatty(fileno(stdout))) {
+        printf("connected!\n\n");
+    }
+
+    if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
+        fprintf(stderr, "\n   Error read system info on %s\n", port.c_str());
+        pi_close(sd);
+        return -1;
+    }
+
+    dlp_ReadUserInfo(sd, &User);
+
+    if (dlp_OpenConduit(sd) < 0) {
+        pi_close(sd);
+        return EXIT_FAILURE;
+    }
+
+    /* Open the Datebook's database, store access handle in db */
+    if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
+        fprintf(stderr,"   ERROR: Unable to open DatebookDB on Palm\n");
+        dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
         // (char*) is a little unsafe, but function does not edit the string
-	    pi_close(sd);
-        return 0;
-	}
-
-if (overwrite) {
-    // delete ALL records
-	result = dlp_DeleteRecord (sd, db, 1, 0);
-}
-
-
-/// data transfer bit?
-			//pack_Appointment(&appointment, Appointment_buf, datebook_v1);
-
-for (int i = 0; i < Appointment_bufs.size(); i++) {
-			dlp_WriteRecord(sd, db, 0, 0, 0,
-					Appointment_bufs[i]->data,
-					Appointment_bufs[i]->used, 0);
-pi_buffer_free(Appointment_bufs[i]);
-}
-//			dlp_WriteRecord(sd, db, 0, 0, 0,
-//					Appointment_buf->data,
-//					Appointment_buf->used, 0);
-
-
-// need to free each buffer after it's written
-
-
-	/* Close the database */
-	dlp_CloseDB(sd, db);
-
-	/* Tell the user who it is, with a different PC id. */
-	User.lastSyncPC 	= 0x00010000;
-	User.successfulSyncDate = time(NULL);
-	User.lastSyncDate 	= User.successfulSyncDate;
-	dlp_WriteUserInfo(sd, &User);
-
-
-	if (dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointment to Palm.\n" 
-				"Thank you for using pilot-link.\n") < 0) {
-                // (char*) is a little unsafe, but function does not edit the string
-	    pi_close(sd);
-        return 0;
-    }
-    
-
-    if(dlp_EndOfSync(sd, 0) < 0)  {
-	    pi_close(sd);
+        pi_close(sd);
         return 0;
     }
 
+    if (overwrite) {
+        // delete ALL records
+        std::cout << "Deleting existing Palm calendar" << std::endl;
+        result = dlp_DeleteRecord(sd, db, 1, 0);
+    }
 
-failed = false;
-pi_socket_t	*ps = find_pi_socket(sd);
-if (ps) {
-    pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
-    usb_dev_handle *dev = (usb_dev_handle*)data->ref;
-    libusb_device_handle *dev_handle = dev->handle;
-    //struct libusb_context *ctx = dev_handle->dev->ctx;
-    libusb_context *ctx = HANDLE_CTX(dev_handle);
-    if (ctx) {
-        libusb_unlock_events(ctx);
+    // send the appointments across one by one
+    for (int i = 0; i < Appointment_bufs.size(); i++) {
+        dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_bufs[i]->data, Appointment_bufs[i]->used, 0);
+        pi_buffer_free(Appointment_bufs[i]); // might as well free each buffer after it's written
+    }
+
+    /* Close the database */
+    dlp_CloseDB(sd, db);
+
+    /* Tell the user who it is, with a different PC id. */
+    User.lastSyncPC     = 0x00010000;
+    User.successfulSyncDate = time(NULL);
+    User.lastSyncDate     = User.successfulSyncDate;
+    dlp_WriteUserInfo(sd, &User);
+
+    // (char*) is a little unsafe, but function does not edit the string
+    if (dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointment to Palm.\n") < 0) {
+        pi_close(sd);
+        return 0;
+    }    
+
+    if (dlp_EndOfSync(sd, 0) < 0)  {
+        pi_close(sd);
+        return 0;
+    }
+
+    // work around for hanging on close due (probably) a race condition closing out libusb
+    failed = false;
+    pi_socket_t *ps = find_pi_socket(sd);
+    if (ps) {
+        pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
+        usb_dev_handle *dev = (usb_dev_handle*)data->ref;
+        libusb_device_handle *dev_handle = dev->handle;
+        libusb_context *ctx = HANDLE_CTX(dev_handle);
+        if (ctx) {
+            libusb_unlock_events(ctx);
+        }
+        else {
+            failed = true;
+        }
     }
     else {
         failed = true;
     }
-}
-else {
-    failed = true;
-}
-if (failed) {
-    std::cout << "Probably hanging on a libusb race condition now..." << std::endl;
-}
+    if (failed) {
+        std::cout << "Probably hanging on a libusb race condition now..." << std::endl;
+    }
+    // the glorious one line version without error handling
+    // libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
 
-//libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
-
-
-	if(pi_close(sd) < 0) {
-		std::cout << "error closing socket to plam pilot" << std::endl;
-        // TODO: hangs on pi_close
+    if(pi_close(sd) < 0) {
+        std::cout << "Error closing socket to plam pilot" << std::endl;
     }
 
     return 0;
