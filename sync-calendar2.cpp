@@ -141,7 +141,8 @@ int main(int argc, char **argv) {
     // https://libical.github.io/libical/apidocs/icalparameter_8h.html
 
     // store all of the calendar events packed ready for copying to the palm
-    std::vector<pi_buffer_t*> Appointment_bufs;
+    std::vector<Appointment> Appointments;
+    std::vector<std::string> uids; // for detecting & merging duplicates
     
     // parse the string into a series of components to iterate through
     icalcomponent* components = icalparser_parse_string(icaldata.c_str());
@@ -176,14 +177,14 @@ int main(int argc, char **argv) {
             }
             std::cout << "    Summary: " << summary << std::endl;
 
-            // TODO: don't skip if it's repeating until past from year
+            // TODO: don't skip if it's repeating until past from year (move skip to point of transfer)
 
             // skip older entries
             icaltimetype start = icalcomponent_get_dtstart(c);
-            if (start.year < fromyear) {
-                std::cout << "    Skipping" << std::endl;
-                continue;
-            }
+//            if (start.year < fromyear) {
+//                std::cout << "    Skipping" << std::endl;
+//                continue;
+//            }
 
             // https://libical.github.io/libical/apidocs/icaltime_8h.html
 
@@ -276,15 +277,14 @@ int main(int argc, char **argv) {
             /* repat stuff, repeat stuff */
 
 
+
+
+
 // TODO: repetition
 
-// components:
-//     RRULE repeating sets
-//     EXDATE dates in the set skipped
-//       appears to be stored as a tm struct with year/month/day only
-
-//     RDATE one off repeating events that were moved? these appear to present as a normal
-//     event so we can probably just ignore them
+// RRULE repeating sets
+// EXDATE dates in the set skipped, stored as a tm struct with year/month/day only
+// RDATE one off of repeating events that were moved, they appear as a normal event so ignore
 
 // https://libical.github.io/libical/apidocs/icalrecur_8h.html
 // https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
@@ -298,6 +298,8 @@ int main(int argc, char **argv) {
 // X BYDAY => repeatDays
 // X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
 //   EXDATE => exception, exceptions
+
+// TODO: test calendar events for COUNT and EXDATE
 
 tm repeatEnd;
 repeatEnd.tm_mday  = 0;
@@ -415,10 +417,25 @@ if (rrule != nullptr) {
 } // rrule
 
 
+// TODO: move this appointment creation earlier so that we directly access it instead of using temporary initialisers
 
+// use event UID to detect duplicates & merge (Google seems to split things out sometimes)
+icalproperty *uidp = icalcomponent_get_first_property(c, ICAL_UID_PROPERTY);
 
+std::string uid("");
+if (uidp != nullptr) {
+    uid = icalproperty_get_uid(uidp);
+    std::cout << "    UID: " << uid << std::endl;
+}
 
-
+int uidmatched = -1;
+for (int i = 0; i < uids.size(); i++) {
+    if (uids[i] == uid && uid != "") {
+        std::cout << "matching previous appt" << std::endl;
+        uidmatched = i;
+        break;
+    }
+}
 
 
             // an annoying round about route from const char* to std::string to char*
@@ -433,7 +450,16 @@ if (rrule != nullptr) {
 
             // store information about this event in the pilot-link struct
             // see pi-datebook.h for details of format
+
             Appointment appointment;
+if (uidmatched != -1) {
+    appointment = Appointments[uidmatched];
+//std::cout << appointment.description << std::endl;
+// if this uid exists twice, assume the later one in the file is newer and overwrite
+
+}
+//else {
+//}
 
             // TODO: only copy if the appointment doesn't already exist
 
@@ -464,23 +490,34 @@ if (rrule != nullptr) {
             appointment.repeatWeekstart    = repeatWeekstart;
             appointment.exceptions         = 0; // TODO: exceptions
             appointment.exception          = NULL;
-            appointment.description        = summary_c2;
+            appointment.description        = summary_c2; // just don't set these if null?
             appointment.note               = note_c;
 
             // TODO: keep a list of appointments instead of appointment bufs
             //       and keep a list of UIDs so that we can merge by them
 
-            Appointment_bufs.push_back(pi_buffer_new (0xffff));
-            pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
+//            Appointment_bufs.push_back(pi_buffer_new (0xffff));
+//            pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
+
+
+if (uidmatched != -1) {
+    Appointments[uidmatched] = appointment;
+}
+else {
+            Appointments.push_back(appointment);
+    uids.push_back(uid);
+}
+
+            std::cout << "    Stored for sync" << std::endl << std::endl;
 
             // should be fine to delete some things after the appointment is packed
             // free_Appointment also frees string pointers
 //            free_Appointment(&appointment); // shouldn't be needed since it wasn't created via malloc or new function?
-            if (summary_c2 != nullptr) {
-                delete [] summary_c2; // created with new, probably should free...
-            }
-            if (note_c != nullptr)
-                delete [] note_c;
+//            if (summary_c2 != nullptr) {
+//                delete [] summary_c2; // created with new, probably should free...
+//            }
+//            if (note_c != nullptr)
+//                delete [] note_c;
 
 
 /*            icalproperty *p; // there will definetely be properties
@@ -570,29 +607,29 @@ if (rrule != nullptr) {
     SysInfo sys_info;
 
     if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
-        fprintf(stderr, "\n   Unable to create socket '%s'\n", port.c_str());
+        fprintf(stderr, "\n    Unable to create socket '%s'\n", port.c_str());
         return EXIT_FAILURE;
     }
 
     if (pi_bind(sd, port.c_str()) < 0) {
-        fprintf(stderr, "   Unable to bind to port: %s\n", port.c_str());
+        fprintf(stderr, "    Unable to bind to port: %s\n", port.c_str());
         return EXIT_FAILURE;
     }
 
     if (!plu_quiet && isatty(fileno(stdout))) {
-        printf("\n   Listening for incoming connection on %s... ", port.c_str());
+        printf("\n    Listening for incoming connection on %s... ", port.c_str());
         fflush(stdout);
     }
 
     if (pi_listen(sd, 1) < 0) {
-        fprintf(stderr, "\n   Error listening on %s\n", port.c_str());
+        fprintf(stderr, "\n    Error listening on %s\n", port.c_str());
         pi_close(sd);
         return EXIT_FAILURE;
     }
 
     sd = pi_accept_to(sd, 0, 0, plu_timeout);
     if (sd < 0) {
-        fprintf(stderr, "\n   Error accepting data on %s\n", port.c_str());
+        fprintf(stderr, "\n    Error accepting data on %s\n", port.c_str());
         pi_close(sd);
         return -1;
     }
@@ -602,7 +639,7 @@ if (rrule != nullptr) {
     }
 
     if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
-        fprintf(stderr, "\n   Error read system info on %s\n", port.c_str());
+        fprintf(stderr, "\n    Error read system info on %s\n", port.c_str());
         pi_close(sd);
         return -1;
     }
@@ -616,7 +653,7 @@ if (rrule != nullptr) {
 
     /* Open the Datebook's database, store access handle in db */
     if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
-        fprintf(stderr,"   ERROR: Unable to open DatebookDB on Palm\n");
+        fprintf(stderr,"    ERROR: Unable to open DatebookDB on Palm\n");
         dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
         // (char*) is a little unsafe, but function does not edit the string
         pi_close(sd);
@@ -625,15 +662,28 @@ if (rrule != nullptr) {
 
     if (overwrite) {
         // delete ALL records
-        std::cout << "Deleting existing Palm calendar" << std::endl;
+        std::cout << "    Deleting existing Palm calendar...";
         result = dlp_DeleteRecord(sd, db, 1, 0);
+        std::cout << " done!" << std::endl << std::endl;
     }
 
     // send the appointments across one by one
-    for (int i = 0; i < Appointment_bufs.size(); i++) {
-        dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_bufs[i]->data, Appointment_bufs[i]->used, 0);
-        pi_buffer_free(Appointment_bufs[i]); // might as well free each buffer after it's written
+    std::cout << "    Writing calendar appointments...";
+    for (int i = 0; i < Appointments.size(); i++) {
+
+        // pack the appointment struct for copying to the palm
+	    pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
+	    pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
+
+        // send to the palm
+        dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
+
+        // free up memory
+        pi_buffer_free(Appointment_buf); // might as well free each buffer after it's written
+        free_Appointment(&Appointments[i]); // also frees string pointers
+
     }
+    std::cout << " done!" << std::endl << std::endl;
 
     /* Close the database */
     dlp_CloseDB(sd, db);
@@ -674,13 +724,13 @@ if (rrule != nullptr) {
         failed = true;
     }
     if (failed) {
-        std::cout << "Probably hanging on a libusb race condition now..." << std::endl;
+        std::cout << "    Probably hanging on a libusb race condition now..." << std::endl << std::endl;
     }
     // the glorious one line version without error handling
     // libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
 
     if(pi_close(sd) < 0) {
-        std::cout << "Error closing socket to plam pilot" << std::endl;
+        std::cout << "    Error closing socket to plam pilot" << std::endl << std::endl;
     }
 
     return 0;
