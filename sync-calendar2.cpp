@@ -191,17 +191,21 @@ int main(int argc, char **argv) {
             // TODO: timezone conversion to localtime
 
             // convert dates and times to start_tm for transfer to palm
-            char buf[200];
+//            char buf[200];
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
             tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
-            TIME_STRING(start)
-            std::cout << "    Start: " << buf << std::endl;
+            timegm(&start_tm); // convert localtime to UTC
+//            TIME_STRING(start)
+//            std::cout << "    Start: " << buf << std::endl;
+            std::cout << "    Start: " << asctime(&start_tm);
 
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
             tm end_tm = *gmtime(&end_time_t);
-            TIME_STRING(end)
-            std::cout << "    End: " << buf << std::endl;
+            timegm(&end_tm);
+//            TIME_STRING(end)
+//            std::cout << "    End: " << buf << std::endl;
+            std::cout << "    End: " << asctime(&end_tm);
 
             // get the location and descriptions and merge for an event attached note
             // there is some tedious conversion from char to const char to string and around things
@@ -292,18 +296,19 @@ int main(int argc, char **argv) {
 
 // X INTERVAL => repeatFrequency
 // X UNTIL => repeatEnd, repeatForever
-//   COUNT => repeatEnd
+// X COUNT => repeatEnd
 // X WKST => repeatWeekstart
 // X BYMONTHDAY => repeatMonthlyByDay
 // X BYDAY => repeatDays
 // X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
-//   EXDATE => exception, exceptions
+// X EXDATE => exception, exceptions
 
-// TODO: test calendar events for COUNT and EXDATE
+// TODO: test calendar events for COUNT and EXDATE and RDATE
 
 tm repeatEnd;
-repeatEnd.tm_mday  = 0;
+repeatEnd.tm_year   = 0;
 repeatEnd.tm_mon   = 0;
+repeatEnd.tm_mday  = 0;
 repeatEnd.tm_wday  = 0;
 int repeatForever = 0;
 int repeatFrequency = 0;
@@ -311,8 +316,8 @@ repeatTypes repeatType = repeatNone; // default no repeat
 int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
 DayOfMonthType repeatDay;
 int repeatDays[7]; for (int i = 0; i < 7; i++) repeatDays[i] = 0;
-// appointment.exceptions         = 0;
-// appointment.exception          = NULL;
+int exceptions = 0;
+tm *exception = nullptr; // this is an array, yikes
 
 // this assumes there's only ever one RRULE property
 icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY); // move this up for checking if it's an old repeating
@@ -329,6 +334,7 @@ if (rrule != nullptr) {
         // there's an until date, use that
         time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
         repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
+        timegm(&end_tm);
     }
     else if (recur.count == 0) {
         // no until date, for the moment assume repeating forever
@@ -336,7 +342,12 @@ if (rrule != nullptr) {
     }
     else {
         //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
-        //TODO: std::chrono ?
+        repeatEnd = start_tm; // this should already be UTC
+        // we add count * freq, but plam os ends on the day specified
+        // end last moment of the day before (we'll have to subtract that day for them later...)
+        repeatEnd.tm_hour = 23;
+        repeatEnd.tm_min = 59;
+        repeatEnd.tm_sec = 59;
     }
 
     repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
@@ -354,6 +365,12 @@ if (rrule != nullptr) {
     else if (freq == ICAL_DAILY_RECURRENCE) {
         std::cout << "    Repeating daily" << std::endl;
         repeatType = repeatDaily;
+
+        if (!repeatForever && recur.count != 0) {
+            repeatEnd.tm_mday += recur.count - 1;
+            timegm(&repeatEnd);
+        }
+
     }
     else if (freq == ICAL_WEEKLY_RECURRENCE) {
         std::cout << "    Repeating weekly" << std::endl;
@@ -365,6 +382,11 @@ if (rrule != nullptr) {
             int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[i]));
             repeatDays[day] = 1;
             std::cout << "        Repeating day " << day << std::endl;
+        }
+
+        if (!repeatForever && recur.count != 0) {
+            repeatEnd.tm_mday += recur.count*7 - 1;
+            timegm(&repeatEnd);
         }
     }
     else if (freq == ICAL_MONTHLY_RECURRENCE) {
@@ -400,16 +422,62 @@ if (rrule != nullptr) {
            
         }
 
+        if (!repeatForever && recur.count != 0) {
+            repeatEnd.tm_mon += recur.count;
+            repeatEnd.tm_mday--;
+            timegm(&repeatEnd);
+        }
+
     }
     else if (freq == ICAL_YEARLY_RECURRENCE) {
         std::cout << "    Repeating yearly" << std::endl;
         repeatType = repeatYearly;
+
+        if (!repeatForever && recur.count != 0) {
+            repeatEnd.tm_year += recur.count;
+            repeatEnd.tm_mday--;
+            timegm(&repeatEnd);
+        }
     }
     else {
         std::cout << "    Unknown repeat frequency" << std::endl;
     }
+    if (!repeatForever) {
+        std::cout << "        Until " << asctime(&repeatEnd);
+//std::cout << repeatEnd.tm_gmtoff << std::endl;
+//std::cout << repeatEnd.tm_zone << std::endl;
+    }
 
 
+
+
+    /* argh exceptions */
+
+exceptions = icalcomponent_count_properties(c, ICAL_EXDATE_PROPERTY);
+if (exceptions != 0) {
+    std::cout << "    There are " << exceptions << " exceptions" << std::endl;
+}
+
+exception = (tm*)malloc(exceptions * sizeof(tm));
+
+int exceptionat = 0;
+for(icalproperty *exdatep = icalcomponent_get_first_property(c, ICAL_EXDATE_PROPERTY); exdatep != 0;
+        exdatep = icalcomponent_get_next_property(c, ICAL_EXDATE_PROPERTY), exceptionat++) {
+
+
+        icaltimetype exdate = icalproperty_get_exdate(exdatep);
+        time_t exdate_time_t = icaltime_as_timet_with_zone(exdate, icaltime_get_timezone(exdate));
+
+//        tm exdate_tm = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
+//        timegm(&exdate_tm); // localtime to UTC
+//        std::cout << "Excluding " << asctime(&exdate_tm);
+
+        exception[exceptionat] = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
+        timegm(&exception[exceptionat]); // localtime to UTC
+        std::cout << "        Excluding " << asctime(&exception[exceptionat]);
+
+
+} // for exdatep
 
 
 
@@ -481,15 +549,16 @@ if (uidmatched != -1) {
             appointment.advanceUnits       = advMinutes;
             appointment.repeatType         = repeatType;
             appointment.repeatForever      = repeatForever;
-            appointment.repeatEnd.tm_mday  = repeatEnd.tm_mday;
+            appointment.repeatEnd.tm_year  = repeatEnd.tm_year;
             appointment.repeatEnd.tm_mon   = repeatEnd.tm_mon;
+            appointment.repeatEnd.tm_mday  = repeatEnd.tm_mday;
             appointment.repeatEnd.tm_wday  = repeatEnd.tm_wday;
             appointment.repeatFrequency    = repeatFrequency;
             appointment.repeatDay          = repeatDay;
             for (int i = 0; i < 7; i++) appointment.repeatDays[i] = repeatDays[i];
             appointment.repeatWeekstart    = repeatWeekstart;
-            appointment.exceptions         = 0; // TODO: exceptions
-            appointment.exception          = NULL;
+            appointment.exceptions         = exceptions;
+            appointment.exception          = exception;
             appointment.description        = summary_c2; // just don't set these if null?
             appointment.note               = note_c;
 

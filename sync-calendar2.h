@@ -16,8 +16,8 @@
 
 // convert a tm to a nice string
 // where there's no time it's a whole day
-#define TIME_STRING(VAR) if (icaltime_is_date(VAR)) { strftime(buf, sizeof buf, "%FT", &VAR ## _tm); } else { \
-    strftime(buf, sizeof buf, "%FT%TZ", &VAR ## _tm); }
+//#define TIME_STRING(VAR) if (icaltime_is_date(VAR)) { strftime(buf, sizeof buf, "%FT", &VAR ## _tm); } else { \
+//    strftime(buf, sizeof buf, "%FT%TZ", &VAR ## _tm); }
 
 // callback for having curl store output in a std::string
 // https://stackoverflow.com/questions/2329571/c-libcurl-get-output-into-a-string
