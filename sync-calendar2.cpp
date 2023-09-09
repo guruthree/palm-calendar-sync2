@@ -169,7 +169,11 @@ int main(int argc, char **argv) {
 
             /* date time description essentials */
 
-            std::string summary(icalcomponent_get_summary(c));
+            std::string summary("");
+            const char* summary_c = icalcomponent_get_summary(c);
+            if (summary_c != nullptr) {
+                summary = summary_c;
+            }
             std::cout << "    Summary: " << summary << std::endl;
 
             // TODO: don't skip if it's repeating until past from year
@@ -201,22 +205,16 @@ int main(int argc, char **argv) {
             // get the location and descriptions and merge for an event attached note
             // there is some tedious conversion from char to const char to string and around things
             // (probably a side effect of mixing C and C++)
-            std::string location;
+            std::string location("");
             const char* location_c = icalcomponent_get_location(c);
             if (location_c != nullptr) {
                 location = location_c;
             }
-            else {
-                location = "";
-            }
 
-            std::string description;
+            std::string description("");
             const char* description_c = icalcomponent_get_description(c);
             if (description_c != nullptr) {
                 description = description_c;
-            }
-            else {
-                description = "";
             }
 
             // merge location and description into the note
@@ -296,9 +294,9 @@ int main(int argc, char **argv) {
 // X UNTIL => repeatEnd, repeatForever
 //   COUNT => repeatEnd
 // X WKST => repeatWeekstart
-//   BYMONTHDAY => repeatDay
-//   BYDAY => repeatDays
-//   FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
+// X BYMONTHDAY => repeatMonthlyByDay
+// X BYDAY => repeatDays
+// X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
 //   EXDATE => exception, exceptions
 
 tm repeatEnd;
@@ -309,26 +307,24 @@ int repeatForever = 0;
 int repeatFrequency = 0;
 repeatTypes repeatType = repeatNone; // default no repeat
 int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
+DayOfMonthType repeatDay;
+int repeatDays[7]; for (int i = 0; i < 7; i++) repeatDays[i] = 0;
 // appointment.exceptions         = 0;
 // appointment.exception          = NULL;
 
 // this assumes there's only ever one RRULE property
 icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY); // move this up for checking if it's an old repeating
 
-if (rrule == nullptr) {
-//    std::cout << "no recurrence" << std::endl;
-}
-else {
-    std::cout << "recurrence" << std::endl;
+if (rrule != nullptr) {
 
     // ics2csv4pdb.py has some logic for the ical => palm conversion already
 
     icalrecurrencetype recur = icalproperty_get_rrule(rrule);
+    std::cout << "    Recurrence: " << icalrecurrencetype_as_string(&recur) << std::endl;
 
     // we're assuming UNTIL and COUNT are mutually exclusive
     if (recur.until.year != 0) {
         // there's an until date, use that
-//TODO: std::chrono ?
         time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
         repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
     }
@@ -338,111 +334,88 @@ else {
     }
     else {
         //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
+        //TODO: std::chrono ?
     }
 
     repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
 
     // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
-    switch (recur.week_start) {
-        case ICAL_SUNDAY_WEEKDAY:
-            repeatWeekstart = 0;
-            break;
-        case ICAL_MONDAY_WEEKDAY:
-            repeatWeekstart = 1;
-            break;
-        case ICAL_TUESDAY_WEEKDAY:
-            repeatWeekstart = 2;
-            break;
-        case ICAL_WEDNESDAY_WEEKDAY:
-            repeatWeekstart = 3;
-            break;
-        case ICAL_THURSDAY_WEEKDAY:
-            repeatWeekstart = 4;
-            break;
-        case ICAL_FRIDAY_WEEKDAY:
-            repeatWeekstart = 5;
-            break;
-        case ICAL_SATURDAY_WEEKDAY :
-            repeatWeekstart = 6;
-            break;
-        default:
-            break;
-    }
-
-std::cout << recur.by_month_day[2] << std::endl;
+    repeatWeekstart = weekday2int(recur.week_start);
 
     icalrecurrencetype_frequency freq = recur.freq;
     if (freq == ICAL_NO_RECURRENCE || 
             freq == ICAL_SECONDLY_RECURRENCE || 
             freq == ICAL_MINUTELY_RECURRENCE || 
             freq == ICAL_HOURLY_RECURRENCE) {
-        repeatFrequency = repeatNone;
+        repeatType = repeatNone;
     }
     else if (freq == ICAL_DAILY_RECURRENCE) {
-        repeatFrequency = repeatDaily;
+        std::cout << "    Repeating daily" << std::endl;
+        repeatType = repeatDaily;
     }
     else if (freq == ICAL_WEEKLY_RECURRENCE) {
-        repeatFrequency = repeatWeekly; // repeatDays from BYDAY
+        std::cout << "    Repeating weekly" << std::endl;
+        repeatType = repeatWeekly; // repeatDays from BYDAY
+
+        // need to loop as there might be more than one day..?
+        for (int i = 0; recur.by_day[i] != ICAL_RECURRENCE_ARRAY_MAX; i++) {
+//            std::cout << i << ":" << recur.by_day[i] << std::endl;
+            int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[i]));
+            repeatDays[day] = 1;
+            std::cout << "        Repeating day " << day << std::endl;
+        }
     }
     else if (freq == ICAL_MONTHLY_RECURRENCE) {
-        // TODO: figure out how we tell these apart
-//        repeatFrequency = repeatMonthlyByDay; // nothing extra to set
-//        repeatFrequency = repeatMonthlyByDate; // need to set repeatDay from BYDAY
+        std::cout << "    Repeating montly" << std::endl;
+        // events usually only repeat on one day of the month, so just check the 0th index
+        if (recur.by_month_day[0] != ICAL_RECURRENCE_ARRAY_MAX) { // BYMONTHDAY
+            // nothing extra to set, palm will just assume it's the date of the start
+            repeatType = repeatMonthlyByDate;
+            // day of the month in by day repeat - this is done in pilot-datebook, but doesn't seem needed based on pi-datebook.h
+            repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
+            std::cout << "        Repeating on " << start_tm.tm_mday << std::endl;
+        }
+        else { // BYDAY
+  
+            // should only ever be the first day as monthly things can't occur more than once a month
+            if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
+                int week = icalrecurrencetype_day_position(recur.by_day[0]);
+                int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
+
+                // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
+                repeatDay = (DayOfMonthType)((week - 1)*7 + day);
+
+                std::cout << "        Repeating the " << day << " of week " << week <<
+                    " (enum " << repeatDay << " " << DayOfMonthString[repeatDay] << ")" << std::endl;
+
+                repeatType = repeatMonthlyByDay; 
+
+            }
+            else {
+                std::cout << "        Unexpected repeat???" << std::endl;
+            }
+
+           
+        }
+
     }
     else if (freq == ICAL_YEARLY_RECURRENCE) {
-        repeatFrequency = repeatYearly;
+        std::cout << "    Repeating yearly" << std::endl;
+        repeatType = repeatYearly;
     }
     else {
         std::cout << "    Unknown repeat frequency" << std::endl;
     }
 
-    std::cout << icalrecurrencetype_as_string(&recur) << std::endl;
-
-/*for (rp = icalproperty_get_first_parameter(rrule, ICAL_ANY_PARAMETER); rp != 0;
-        rp = icalproperty_get_next_parameter(rrule, ICAL_ANY_PARAMETER)) {
-
-
-    std::cout << "recurrence" << std::endl;
-
-//    std::cout << "rp" << icalparameter_as_ical_string(rp);
-    const char* propname = nullptr;
-    const char* val = nullptr;
-    icalparameter_kind paramkind = icalparameter_isa(rp);
-
-    if (paramkind == ICAL_X_PARAMETER) {
-        propname = icalparameter_get_xname(rp);
-        val = icalparameter_get_xvalue(rp);
-    }
-    else if (paramkind == ICAL_IANA_PARAMETER) {
-        propname = icalparameter_get_iana_name(rp);
-        val = icalparameter_get_iana_value(rp);
-    }
-    else if (paramkind != ICAL_NO_PARAMETER) {
-        propname = icalparameter_kind_to_string(paramkind);
-        val = icalproperty_get_parameter_as_string(rrule, propname);
-    }
-
-
-    std::cout << "    " << propname << std::endl;
-    if (val != nullptr) {
-        std::cout << "   \\" << val << std::endl;
-    }
-
-} // for rp */
-
-
-
-} // else reccurrence
 
 
 
 
 
-//struct icalrecurrencetype recur;
-//struct icaltimetype dtstart;
- 
-//rrule = ;
-//recur = icalproperty_get_rrule(rrule);
+} // rrule
+
+
+
 
 
 
@@ -450,8 +423,8 @@ std::cout << recur.by_month_day[2] << std::endl;
 
             // an annoying round about route from const char* to std::string to char*
             // https://stackoverflow.com/questions/7352099/stdstring-to-char
-            char *summary_c = new char[summary.length()+1];
-            strcpy(summary_c, summary.c_str());
+            char *summary_c2 = new char[summary.length()+1];
+            strcpy(summary_c2, summary.c_str());
             char *note_c = nullptr;
             if (note.length() > 0) { // note might be empty
                 note_c = new char[note.length()+1];
@@ -486,11 +459,16 @@ std::cout << recur.by_month_day[2] << std::endl;
             appointment.repeatEnd.tm_mon   = repeatEnd.tm_mon;
             appointment.repeatEnd.tm_wday  = repeatEnd.tm_wday;
             appointment.repeatFrequency    = repeatFrequency;
+            appointment.repeatDay          = repeatDay;
+            for (int i = 0; i < 7; i++) appointment.repeatDays[i] = repeatDays[i];
             appointment.repeatWeekstart    = repeatWeekstart;
             appointment.exceptions         = 0; // TODO: exceptions
             appointment.exception          = NULL;
-            appointment.description        = summary_c;
+            appointment.description        = summary_c2;
             appointment.note               = note_c;
+
+            // TODO: keep a list of appointments instead of appointment bufs
+            //       and keep a list of UIDs so that we can merge by them
 
             Appointment_bufs.push_back(pi_buffer_new (0xffff));
             pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
@@ -498,8 +476,8 @@ std::cout << recur.by_month_day[2] << std::endl;
             // should be fine to delete some things after the appointment is packed
             // free_Appointment also frees string pointers
 //            free_Appointment(&appointment); // shouldn't be needed since it wasn't created via malloc or new function?
-            if (summary_c != nullptr) {
-                delete [] summary_c; // created with new, probably should free...
+            if (summary_c2 != nullptr) {
+                delete [] summary_c2; // created with new, probably should free...
             }
             if (note_c != nullptr)
                 delete [] note_c;
@@ -562,7 +540,7 @@ std::cout << recur.by_month_day[2] << std::endl;
 */
 
         } // for c
-        if (c != nullptr) icalcomponent_free(c);
+//        if (c != nullptr) icalcomponent_free(c);
 
         icalcomponent_free(components); // already not null by definition inside this loop
 
