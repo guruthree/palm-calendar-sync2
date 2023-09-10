@@ -22,29 +22,70 @@
 #include "libusb.h"
 #include "sync-calendar2.h"
 
-// TODO: we'll need to implement argument parsing for specifying:
-// * palm pilot port
-// * configuration file
-// man 3 getopt
-// TODO: adding only new events
-// TODO: read plam only configuration option (vs read/write the palm)
+// TODO: adding only new events, ONLYNEW=true
 // TODO: quit nicely catching errors and whatnot (try catch finally?)
+// log4cplus for logging?
 int main(int argc, char **argv) {
 
-    /** read in configuration settings using libconfig **/
-
     // configuration settings & defaults
+    std::string configfile("datebook.cfg");
     std::string uri, port, timezone("UTC");
     int fromyear = 0;
-    bool dohotsync = true, doalarms = false, overwrite = true, insecure = false;
+    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, insecure = false;
+    bool portoverride = false, urioverride = false; // command line argument overrides config file argument
+
+
+    /** read in command line arguments **/
+
+    // based on https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
+    for (int c; (c = getopt(argc, argv, "hp:u:c:")) != -1; ) { // man 3 getopt
+        switch (c) {
+            case 'h': // port
+                std::cout << "sync-calendar2, a tool for copying an ical to palm" << std::endl << std::endl;
+                std::cout << "Usage: sync-calendar2 [options]" << std::endl << std::endl;
+                std::cout << "Options:" << std::endl << std::endl;
+                std::cout << "    -c  Specify config file (default datebook.cfg)" << std::endl;
+                std::cout << "    -h  Print this help message and quit" << std::endl;
+                std::cout << "    -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
+                std::cout << "    -u  Override calendar URI" << std::endl;
+                std::cout << std::endl;
+                return EXIT_SUCCESS;
+
+            case 'u': // uri
+                uri = optarg;
+                std::cout << "Argument -u: " << uri << std::endl;
+                urioverride = true;
+                break;
+
+            case 'p': // port
+                port = optarg;
+                std::cout << "Argument -p: " << port << std::endl;
+                portoverride = true;
+                break;
+
+            case 'c': // config file
+                configfile = optarg;
+                break;
+
+            case '?':
+                return EXIT_FAILURE;
+
+            default:
+                break;
+        }
+    }
+
+
+    /** read in configuration settings using libconfig **/
 
     libconfig::Config cfg;
     cfg.setOption(libconfig::Config::OptionAutoConvert, true); // float to int and viceversa?
     try {
-        cfg.readFile("datebook.cfg");
+        std::cout << "Reading from " << configfile << std::endl;
+        cfg.readFile(configfile);
     }
     catch (const libconfig::FileIOException &fioex) {
-        std::cerr << "I/O error while reading file." << std::endl;
+        std::cerr << "I/O error while reading" << std::endl;
         return EXIT_FAILURE;
     }
     catch (const libconfig::ParseException &pex) {
@@ -53,9 +94,14 @@ int main(int argc, char **argv) {
 
     // use macros to tidy up reading config options
     // first in caps config item (will be a string), second variable name
-    FAIL_CFG(URI, uri)
-    FAIL_CFG(PORT, port)
+    if (!urioverride) {
+        FAIL_CFG(URI, uri)
+    }
+    if (!portoverride) {
+        FAIL_CFG(PORT, port)
+    }
     NON_FAIL_CFG(DOHOTSYNC, dohotsync)
+    NON_FAIL_CFG(READONLY, readonly)
     NON_FAIL_CFG(TIMEZONE, timezone)
     NON_FAIL_CFG(FROMYEAR, fromyear)
     NON_FAIL_CFG(OVERWRITE, overwrite)
@@ -123,9 +169,6 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    
-    // TODO: read existing calendar events off of palm pilot
-
 
     /** parse calendar using libical **/
 
@@ -139,6 +182,8 @@ int main(int argc, char **argv) {
     // https://libical.github.io/libical/apidocs/icalcomponent_8h.html
     // https://libical.github.io/libical/apidocs/icalproperty_8h.html
     // https://libical.github.io/libical/apidocs/icalparameter_8h.html
+    // https://libical.github.io/libical/apidocs/icaltime_8h.html
+    // https://libical.github.io/libical/apidocs/structicaltimetype.html
 
     // store all of the calendar events packed ready for copying to the palm
     std::vector<Appointment> Appointments;
@@ -170,6 +215,21 @@ int main(int argc, char **argv) {
 
             /* date time description essentials */
 
+            // convert dates and times to start_tm for transfer to palm
+            icaltimetype start = icalcomponent_get_dtstart(c);
+            time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
+            tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
+            timegm(&start_tm); // convert localtime to UTC
+            std::cout << "    Start: " << asctime(&start_tm);
+
+            icaltimetype end = icalcomponent_get_dtend(c);
+            time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
+            tm end_tm = *gmtime(&end_time_t);
+            timegm(&end_tm);
+            std::cout << "    End: " << asctime(&end_tm);
+
+            // there is some tedious conversion from char to const char to string and around things
+            // (probably a side effect of mixing C and C++)
             std::string summary("");
             const char* summary_c = icalcomponent_get_summary(c);
             if (summary_c != nullptr) {
@@ -177,39 +237,7 @@ int main(int argc, char **argv) {
             }
             std::cout << "    Summary: " << summary << std::endl;
 
-            // TODO: don't skip if it's repeating until past from year (move skip to point of transfer)
-
-            // skip older entries
-            icaltimetype start = icalcomponent_get_dtstart(c);
-//            if (start.year < fromyear) {
-//                std::cout << "    Skipping" << std::endl;
-//                continue;
-//            }
-
-            // https://libical.github.io/libical/apidocs/icaltime_8h.html
-
-            // TODO: timezone conversion to localtime
-
-            // convert dates and times to start_tm for transfer to palm
-//            char buf[200];
-            time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
-            tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
-            timegm(&start_tm); // convert localtime to UTC
-//            TIME_STRING(start)
-//            std::cout << "    Start: " << buf << std::endl;
-            std::cout << "    Start: " << asctime(&start_tm);
-
-            icaltimetype end = icalcomponent_get_dtend(c);
-            time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
-            tm end_tm = *gmtime(&end_time_t);
-            timegm(&end_tm);
-//            TIME_STRING(end)
-//            std::cout << "    End: " << buf << std::endl;
-            std::cout << "    End: " << asctime(&end_tm);
-
             // get the location and descriptions and merge for an event attached note
-            // there is some tedious conversion from char to const char to string and around things
-            // (probably a side effect of mixing C and C++)
             std::string location("");
             const char* location_c = icalcomponent_get_location(c);
             if (location_c != nullptr) {
@@ -234,7 +262,12 @@ int main(int argc, char **argv) {
                 }
                 note = note + description;
             }
-            std::cout << "    Note: [[" << note << "]]" << std::endl;
+            if (note.length() > 0) {
+                std::cout << "    Note:\n        " << note << std::endl;
+            }
+
+
+// TODO: create Appointment here
 
 
             /* what about an alarm */
@@ -280,209 +313,190 @@ int main(int argc, char **argv) {
 
             /* repat stuff, repeat stuff */
 
+            // RRULE repeating sets
+            // EXDATE dates in the set skipped, stored as a tm struct with year/month/day only
+            // RDATE one off of repeating events that were moved, they appear as a normal event so ignore
 
+            // https://libical.github.io/libical/apidocs/icalrecur_8h.html
+            // https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
+            // https://freetools.textmagic.com/rrule-generator
 
+            // X INTERVAL => repeatFrequency
+            // X UNTIL => repeatEnd, repeatForever
+            // X COUNT => repeatEnd
+            // X WKST => repeatWeekstart
+            // X BYMONTHDAY => repeatMonthlyByDay
+            // X BYDAY => repeatDays
+            // X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
+            // X EXDATE => exception, exceptions
 
+            // TODO: final repetition checks, need to test COUNT, EXDATE, RDATE thoroughly
 
-// TODO: repetition
+// TODO: operate directly on Appointment instead of these temporary values
+            tm repeatEnd;
+            repeatEnd.tm_year   = 0;
+            repeatEnd.tm_mon   = 0;
+            repeatEnd.tm_mday  = 0;
+            repeatEnd.tm_wday  = 0;
+            int repeatForever = 0;
+            int repeatFrequency = 0;
+            repeatTypes repeatType = repeatNone; // default no repeat
+            int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
+            DayOfMonthType repeatDay;
+            int repeatDays[7]; for (int i = 0; i < 7; i++) repeatDays[i] = 0;
+            int exceptions = 0;
+            tm *exception = nullptr; // this is an array, yikes
 
-// RRULE repeating sets
-// EXDATE dates in the set skipped, stored as a tm struct with year/month/day only
-// RDATE one off of repeating events that were moved, they appear as a normal event so ignore
+            // this assumes there's only ever one RRULE property (palm can only support one anyway)
+            icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY);
+            if (rrule != nullptr) {
 
-// https://libical.github.io/libical/apidocs/icalrecur_8h.html
-// https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
-// https://freetools.textmagic.com/rrule-generator
+                icalrecurrencetype recur = icalproperty_get_rrule(rrule);
+                std::cout << "    Recurrence: " << icalrecurrencetype_as_string(&recur) << std::endl;
 
-// X INTERVAL => repeatFrequency
-// X UNTIL => repeatEnd, repeatForever
-// X COUNT => repeatEnd
-// X WKST => repeatWeekstart
-// X BYMONTHDAY => repeatMonthlyByDay
-// X BYDAY => repeatDays
-// X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
-// X EXDATE => exception, exceptions
+                // we're assuming UNTIL and COUNT are mutually exclusive
+                if (recur.until.year != 0) {
 
-// TODO: test calendar events for COUNT and EXDATE and RDATE
+                    // there's an until date, use that
+                    time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
+                    repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
+                    timegm(&end_tm);
+                }
+                else if (recur.count == 0) {
 
-tm repeatEnd;
-repeatEnd.tm_year   = 0;
-repeatEnd.tm_mon   = 0;
-repeatEnd.tm_mday  = 0;
-repeatEnd.tm_wday  = 0;
-int repeatForever = 0;
-int repeatFrequency = 0;
-repeatTypes repeatType = repeatNone; // default no repeat
-int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
-DayOfMonthType repeatDay;
-int repeatDays[7]; for (int i = 0; i < 7; i++) repeatDays[i] = 0;
-int exceptions = 0;
-tm *exception = nullptr; // this is an array, yikes
+                    // no until date, for the moment assume repeating forever
+                    repeatForever = 1;
+                }
+                else {
 
-// this assumes there's only ever one RRULE property
-icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY); // move this up for checking if it's an old repeating
+                    //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
+                    repeatEnd = start_tm; // this should already be UTC
+                    // we add count * freq, but plam os ends on the day specified
+                    // end last moment of the day before (we'll have to subtract that day for them later...)
+                    repeatEnd.tm_hour = 23;
+                    repeatEnd.tm_min = 59;
+                    repeatEnd.tm_sec = 59;
+                }
 
-if (rrule != nullptr) {
+                repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
 
-    // ics2csv4pdb.py has some logic for the ical => palm conversion already
+                // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
+                repeatWeekstart = weekday2int(recur.week_start);
 
-    icalrecurrencetype recur = icalproperty_get_rrule(rrule);
-    std::cout << "    Recurrence: " << icalrecurrencetype_as_string(&recur) << std::endl;
+                icalrecurrencetype_frequency freq = recur.freq;
+                if (freq == ICAL_NO_RECURRENCE || 
+                        freq == ICAL_SECONDLY_RECURRENCE || 
+                        freq == ICAL_MINUTELY_RECURRENCE || 
+                        freq == ICAL_HOURLY_RECURRENCE) {
 
-    // we're assuming UNTIL and COUNT are mutually exclusive
-    if (recur.until.year != 0) {
-        // there's an until date, use that
-        time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
-        repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
-        timegm(&end_tm);
-    }
-    else if (recur.count == 0) {
-        // no until date, for the moment assume repeating forever
-        repeatForever = 1;
-    }
-    else {
-        //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
-        repeatEnd = start_tm; // this should already be UTC
-        // we add count * freq, but plam os ends on the day specified
-        // end last moment of the day before (we'll have to subtract that day for them later...)
-        repeatEnd.tm_hour = 23;
-        repeatEnd.tm_min = 59;
-        repeatEnd.tm_sec = 59;
-    }
+                    // palm doesn't support anything less than daily, so no repeating
+                    repeatType = repeatNone;
+                    std::cout << "    Unsupported frequency, repeating disabled!" << std::endl;
+                }
+                else if (freq == ICAL_DAILY_RECURRENCE) {
 
-    repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
+                    std::cout << "    Repeating daily" << std::endl;
+                    repeatType = repeatDaily;
 
-    // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
-    repeatWeekstart = weekday2int(recur.week_start);
+                    if (!repeatForever && recur.count != 0) {
+                        repeatEnd.tm_mday += recur.count - 1;
+                        timegm(&repeatEnd);
+                    }
+                }
+                else if (freq == ICAL_WEEKLY_RECURRENCE) {
 
-    icalrecurrencetype_frequency freq = recur.freq;
-    if (freq == ICAL_NO_RECURRENCE || 
-            freq == ICAL_SECONDLY_RECURRENCE || 
-            freq == ICAL_MINUTELY_RECURRENCE || 
-            freq == ICAL_HOURLY_RECURRENCE) {
-        repeatType = repeatNone;
-    }
-    else if (freq == ICAL_DAILY_RECURRENCE) {
-        std::cout << "    Repeating daily" << std::endl;
-        repeatType = repeatDaily;
+                    std::cout << "    Repeating weekly" << std::endl;
+                    repeatType = repeatWeekly; // repeatDays from BYDAY
 
-        if (!repeatForever && recur.count != 0) {
-            repeatEnd.tm_mday += recur.count - 1;
-            timegm(&repeatEnd);
-        }
+                    // need to loop as there might be more than one day..?
+                    for (int i = 0; recur.by_day[i] != ICAL_RECURRENCE_ARRAY_MAX; i++) {
+                        int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[i]));
+                        repeatDays[day] = 1;
+                        std::cout << "        Repeating day " << day << std::endl;
+                    }
 
-    }
-    else if (freq == ICAL_WEEKLY_RECURRENCE) {
-        std::cout << "    Repeating weekly" << std::endl;
-        repeatType = repeatWeekly; // repeatDays from BYDAY
+                    if (!repeatForever && recur.count != 0) {
+                        repeatEnd.tm_mday += recur.count*7 - 1;
+                        timegm(&repeatEnd);
+                    }
+                }
+                else if (freq == ICAL_MONTHLY_RECURRENCE) {
 
-        // need to loop as there might be more than one day..?
-        for (int i = 0; recur.by_day[i] != ICAL_RECURRENCE_ARRAY_MAX; i++) {
-//            std::cout << i << ":" << recur.by_day[i] << std::endl;
-            int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[i]));
-            repeatDays[day] = 1;
-            std::cout << "        Repeating day " << day << std::endl;
-        }
+                    std::cout << "    Repeating montly" << std::endl;
+                    // events usually only repeat on one day of the month, so just check the 0th index
+                    if (recur.by_month_day[0] != ICAL_RECURRENCE_ARRAY_MAX) { // BYMONTHDAY
 
-        if (!repeatForever && recur.count != 0) {
-            repeatEnd.tm_mday += recur.count*7 - 1;
-            timegm(&repeatEnd);
-        }
-    }
-    else if (freq == ICAL_MONTHLY_RECURRENCE) {
-        std::cout << "    Repeating montly" << std::endl;
-        // events usually only repeat on one day of the month, so just check the 0th index
-        if (recur.by_month_day[0] != ICAL_RECURRENCE_ARRAY_MAX) { // BYMONTHDAY
-            // nothing extra to set, palm will just assume it's the date of the start
-            repeatType = repeatMonthlyByDate;
-            // day of the month in by day repeat - this is done in pilot-datebook, but doesn't seem needed based on pi-datebook.h
-            repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
-            std::cout << "        Repeating on " << start_tm.tm_mday << std::endl;
-        }
-        else { // BYDAY
-  
-            // should only ever be the first day as monthly things can't occur more than once a month
-            if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
-                int week = icalrecurrencetype_day_position(recur.by_day[0]);
-                int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
-
-                // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
-                repeatDay = (DayOfMonthType)((week - 1)*7 + day);
-
-                std::cout << "        Repeating the " << day << " of week " << week <<
-                    " (enum " << repeatDay << " " << DayOfMonthString[repeatDay] << ")" << std::endl;
-
-                repeatType = repeatMonthlyByDay; 
-
-            }
-            else {
-                std::cout << "        Unexpected repeat???" << std::endl;
-            }
-
+                        // nothing extra to set, palm will just assume it's the date of the start
+                        repeatType = repeatMonthlyByDate;
+                        // day of the month in by day repeat - this is done in pilot-datebook, but doesn't seem needed based on pi-datebook.h
+                        repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
+                        std::cout << "        Repeating on " << start_tm.tm_mday << std::endl;
+                    }
+                    else { // BYDAY   
            
-        }
+                        // should only ever be the first day as monthly things can't occur more than once a month
+                        if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
+                            int week = icalrecurrencetype_day_position(recur.by_day[0]);
+                            int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
 
-        if (!repeatForever && recur.count != 0) {
-            repeatEnd.tm_mon += recur.count;
-            repeatEnd.tm_mday--;
-            timegm(&repeatEnd);
-        }
+                            // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
+                            repeatDay = (DayOfMonthType)((week - 1)*7 + day);
 
-    }
-    else if (freq == ICAL_YEARLY_RECURRENCE) {
-        std::cout << "    Repeating yearly" << std::endl;
-        repeatType = repeatYearly;
+                            std::cout << "        Repeating the " << day << " of week " << week <<
+                                " (enum " << repeatDay << " " << DayOfMonthString[repeatDay] << ")" << std::endl;
 
-        if (!repeatForever && recur.count != 0) {
-            repeatEnd.tm_year += recur.count;
-            repeatEnd.tm_mday--;
-            timegm(&repeatEnd);
-        }
-    }
-    else {
-        std::cout << "    Unknown repeat frequency" << std::endl;
-    }
-    if (!repeatForever) {
-        std::cout << "        Until " << asctime(&repeatEnd);
-//std::cout << repeatEnd.tm_gmtoff << std::endl;
-//std::cout << repeatEnd.tm_zone << std::endl;
-    }
+                            repeatType = repeatMonthlyByDay; 
+                        }
+                        else {
+                            std::cout << "        Unexpected repeat???" << std::endl;
+                        }
+                    }
 
+                    if (!repeatForever && recur.count != 0) {
+                        repeatEnd.tm_mon += recur.count;
+                        repeatEnd.tm_mday--;
+                        timegm(&repeatEnd);
+                    }
+                }
+                else if (freq == ICAL_YEARLY_RECURRENCE) {
+                    std::cout << "    Repeating yearly" << std::endl;
+                    repeatType = repeatYearly;
 
-
-
-    /* argh exceptions */
-
-exceptions = icalcomponent_count_properties(c, ICAL_EXDATE_PROPERTY);
-if (exceptions != 0) {
-    std::cout << "    There are " << exceptions << " exceptions" << std::endl;
-}
-
-exception = (tm*)malloc(exceptions * sizeof(tm));
-
-int exceptionat = 0;
-for(icalproperty *exdatep = icalcomponent_get_first_property(c, ICAL_EXDATE_PROPERTY); exdatep != 0;
-        exdatep = icalcomponent_get_next_property(c, ICAL_EXDATE_PROPERTY), exceptionat++) {
+                    if (!repeatForever && recur.count != 0) {
+                        repeatEnd.tm_year += recur.count;
+                        repeatEnd.tm_mday--;
+                        timegm(&repeatEnd);
+                    }
+                }
+                else {
+                    std::cout << "    Unknown repeat frequency" << std::endl;
+                }
+                if (!repeatForever) {
+                    std::cout << "        Until " << asctime(&repeatEnd);
+                }
 
 
-        icaltimetype exdate = icalproperty_get_exdate(exdatep);
-        time_t exdate_time_t = icaltime_as_timet_with_zone(exdate, icaltime_get_timezone(exdate));
+                /* argh exceptions */
 
-//        tm exdate_tm = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
-//        timegm(&exdate_tm); // localtime to UTC
-//        std::cout << "Excluding " << asctime(&exdate_tm);
+                exceptions = icalcomponent_count_properties(c, ICAL_EXDATE_PROPERTY);
+                if (exceptions != 0) {
+                    std::cout << "    There are " << exceptions << " exceptions" << std::endl;
+                }
 
-        exception[exceptionat] = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
-        timegm(&exception[exceptionat]); // localtime to UTC
-        std::cout << "        Excluding " << asctime(&exception[exceptionat]);
+                exception = (tm*)malloc(exceptions * sizeof(tm)); // this should be freed by free_Appointment later
 
+                int exceptionat = 0;
+                for(icalproperty *exdatep = icalcomponent_get_first_property(c, ICAL_EXDATE_PROPERTY); exdatep != 0;
+                        exdatep = icalcomponent_get_next_property(c, ICAL_EXDATE_PROPERTY), exceptionat++) {
 
-} // for exdatep
+                    icaltimetype exdate = icalproperty_get_exdate(exdatep);
+                    time_t exdate_time_t = icaltime_as_timet_with_zone(exdate, icaltime_get_timezone(exdate));
 
-
-
-
-} // rrule
+                    exception[exceptionat] = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
+                    timegm(&exception[exceptionat]); // localtime to UTC
+                    std::cout << "        Excluding " << asctime(&exception[exceptionat]);
+                } // for exdatep
+            } // rrule
 
 
 // TODO: move this appointment creation earlier so that we directly access it instead of using temporary initialisers
@@ -579,79 +593,14 @@ else {
 
             std::cout << "    Stored for sync" << std::endl << std::endl;
 
-            // should be fine to delete some things after the appointment is packed
-            // free_Appointment also frees string pointers
-//            free_Appointment(&appointment); // shouldn't be needed since it wasn't created via malloc or new function?
-//            if (summary_c2 != nullptr) {
-//                delete [] summary_c2; // created with new, probably should free...
-//            }
-//            if (note_c != nullptr)
-//                delete [] note_c;
-
-
-/*            icalproperty *p; // there will definetely be properties
-
-            for(p = icalcomponent_get_first_property(c, ICAL_ANY_PROPERTY); p != 0;
-                    p = icalcomponent_get_next_property(c, ICAL_ANY_PROPERTY)) {
-
-                // use the get functions for these
-//                if (icalproperty_isa(p) == ICAL_DTSTART_PROPERTY)
-//                    continue;
-//                if (icalproperty_isa(p) == ICAL_DTEND_PROPERTY)
-//                    continue;
-//                if (icalproperty_isa(p) == ICAL_SUMMARY_PROPERTY)
-//                    continue;
-
-                std::cout << "  " << icalproperty_get_property_name(p) << std::endl;
-                std::cout << " \\" << icalproperty_get_value_as_string(p) << std::endl;
-
-                icalparameter *p2; // there might not be parameters
-
-                for(p2 = icalproperty_get_first_parameter(p, ICAL_ANY_PARAMETER); p2 != 0;
-                        p2 = icalproperty_get_next_parameter(p, ICAL_ANY_PARAMETER)) {
 
 
 
-                    //std::cout << "p2" << icalparameter_as_ical_string(p2);
-                    const char* propname = nullptr;
-                    const char* val = nullptr;
-                    icalparameter_kind paramkind = icalparameter_isa(p2);
-
-                    if (paramkind == ICAL_X_PARAMETER) {
-                        propname = icalparameter_get_xname(p2);
-                        val = icalparameter_get_xvalue(p2);
-                    }
-                    else if (paramkind == ICAL_IANA_PARAMETER) {
-                        propname = icalparameter_get_iana_name(p2);
-                        val = icalparameter_get_iana_value(p2);
-                    }
-                    else if (paramkind != ICAL_NO_PARAMETER) {
-                        propname = icalparameter_kind_to_string(paramkind);
-                        val = icalproperty_get_parameter_as_string(p, propname);
-                    }
-
-
-                    std::cout << "    " << propname << std::endl;
-                    if (val != nullptr) {
-                        std::cout << "   \\" << val << std::endl;
-                    }
-
-                } // for p2
-                if (p2 != nullptr) icalparameter_free(p2);
-
-            } // for p
-            if (p != nullptr) icalproperty_free(p);
-
-            std::cout << "End of event" << std::endl;
-*/
 
         } // for c
 //        if (c != nullptr) icalcomponent_free(c);
-
-        icalcomponent_free(components); // already not null by definition inside this loop
-
+        icalcomponent_free(components); // already not null by definition inside this if statement
     } // if components
-
 
     if (!dohotsync) {
         return EXIT_SUCCESS;
@@ -728,34 +677,58 @@ else {
         pi_close(sd);
         return 0;
     }
+    else {
+        std::cout << "    Datebook opened." << std::endl;
+    }
 
-    if (overwrite) {
+    if (overwrite && !readonly) {
         // delete ALL records
         std::cout << "    Deleting existing Palm calendar...";
         result = dlp_DeleteRecord(sd, db, 1, 0);
         std::cout << " done!" << std::endl << std::endl;
     }
 
+
+
+    // TODO: timezone conversion to localtime
+
+    // TODO: read existing calendar events off of palm pilot add add ONLYNEW events
+    // store UID in note and then grab it out UID for updating? or is datetime + name good enough? (config option?)
+
+
+
     // send the appointments across one by one
-    std::cout << "    Writing calendar appointments...";
-    for (int i = 0; i < Appointments.size(); i++) {
+    if (!readonly) {
+        std::cout << "    Writing calendar appointments...";
+        for (int i = 0; i < Appointments.size(); i++) {
 
-        // pack the appointment struct for copying to the palm
-	    pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
-	    pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
 
-        // send to the palm
-        dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
+            // TODO: skip if it's older than FROMYEAR and repeating until now
+//            if (start.year < fromyear) {
+//                std::cout << "    Skipping" << std::endl;
+//                continue;
+//            }
 
-        // free up memory
-        pi_buffer_free(Appointment_buf); // might as well free each buffer after it's written
-        free_Appointment(&Appointments[i]); // also frees string pointers
 
+            // pack the appointment struct for copying to the palm
+	        pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
+	        pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
+            // could free here? should be fine to delete some things after the appointment is packed
+
+            // send to the palm
+            dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
+
+            // free up memory
+            pi_buffer_free(Appointment_buf); // might as well free each buffer after it's written
+//            free_Appointment(&Appointments[i]); // also frees string pointers (or just let these live until quitting hopefully destroys all)
+
+        }
+        std::cout << " done!" << std::endl << std::endl;
     }
-    std::cout << " done!" << std::endl << std::endl;
 
     /* Close the database */
     dlp_CloseDB(sd, db);
+    std::cout << "    Datebook closed." << std::endl;
 
     /* Tell the user who it is, with a different PC id. */
     User.lastSyncPC     = 0x00010000;
