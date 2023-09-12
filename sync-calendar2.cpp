@@ -24,7 +24,9 @@
 
 // TODO: adding only new events, ONLYNEW=true
 // TODO: quit nicely catching errors and whatnot (try catch finally?)
-// log4cplus for logging?
+
+// add log4cplus for logging?
+
 int main(int argc, char **argv) {
 
     // configuration settings & defaults
@@ -112,7 +114,7 @@ int main(int argc, char **argv) {
 
     /** read in calendar data using libcurl **/
 
-    // use to mark exiting on an error
+    // use to mark for exiting on an error
     bool failed = false;
     // the downloaded ical data
     std::string icaldata;
@@ -213,29 +215,75 @@ int main(int argc, char **argv) {
             std::cout << "Processing event" << std::endl;
 
 
+            /* create Appointment if it doesn't already exist */
+
+            // use event UID to detect duplicates & merge (Google seems to split things out sometimes?)
+            icalproperty *uidp = icalcomponent_get_first_property(c, ICAL_UID_PROPERTY);
+
+            std::string uid("");
+            if (uidp != nullptr) {
+                uid = icalproperty_get_uid(uidp);
+                std::cout << "    UID: " << uid << std::endl;
+            }
+
+            int uidmatched = -1;
+            for (int i = 0; i < uids.size(); i++) {
+                if (uids[i] == uid && uid != "") {
+                    std::cout << "        Previous UID match" << std::endl;
+                    uidmatched = i;
+                    break;
+                }
+            }
+
+            // store information about this event in the pilot-link Appointment struct
+            // see pi-datebook.h for details of format
+            Appointment appointment;
+
+            if (uidmatched != -1) {
+                // if this uid exists twice, assume the later one in the file is newer and overwrite any properties specified
+                appointment = Appointments[uidmatched];
+            }
+
+
             /* date time description essentials */
 
-            // convert dates and times to start_tm for transfer to palm
+            // convert dates and times to tm for transfer to palm
             icaltimetype start = icalcomponent_get_dtstart(c);
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
-            tm start_tm = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
-            timegm(&start_tm); // convert localtime to UTC
-            std::cout << "    Start: " << asctime(&start_tm);
+            appointment.begin = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
+            timegm(&appointment.begin); // convert localtime to UTC
+            std::cout << "    Start: " << asctime(&appointment.begin);
 
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
-            tm end_tm = *gmtime(&end_time_t);
-            timegm(&end_tm);
-            std::cout << "    End: " << asctime(&end_tm);
+            appointment.end = *gmtime(&end_time_t);
+            timegm(&appointment.end);
+            std::cout << "    End: " << asctime(&appointment.end);
+
+            // if it's just a date in ical the appointment is an all day event
+            if (icaltime_is_date(start) && icaltime_is_date(end))
+                appointment.event          = 1;
+            else
+                appointment.event          = 0;
 
             // there is some tedious conversion from char to const char to string and around things
             // (probably a side effect of mixing C and C++)
             std::string summary("");
             const char* summary_c = icalcomponent_get_summary(c);
             if (summary_c != nullptr) {
+
                 summary = summary_c;
+                std::cout << "    Summary: " << summary << std::endl;
+
+                // an annoying round about route from const char* to std::string to char*
+                // https://stackoverflow.com/questions/7352099/stdstring-to-char
+                char *summary_c2 = new char[summary.length()+1];
+                strcpy(summary_c2, summary.c_str());
+                appointment.description        = summary_c2;
             }
-            std::cout << "    Summary: " << summary << std::endl;
+            else if (uidmatched == -1) { // only apply default if it's not part of merging another appointment
+                appointment.description        = nullptr;
+            }
 
             // get the location and descriptions and merge for an event attached note
             std::string location("");
@@ -262,12 +310,17 @@ int main(int argc, char **argv) {
                 }
                 note = note + description;
             }
-            if (note.length() > 0) {
+            if (note.length() > 0) { // note might be empty
+
                 std::cout << "    Note:\n        " << note << std::endl;
+
+                char *note_c2 = new char[note.length()+1];
+                strcpy(note_c2, note.c_str());
+                appointment.note               = note_c2;
             }
-
-
-// TODO: create Appointment here
+            else if (uidmatched == -1) {
+                appointment.note               = nullptr;
+            }
 
 
             /* what about an alarm */
@@ -301,13 +354,20 @@ int main(int argc, char **argv) {
                         }
                     }
                 } // c2
-            } // numalarms
 
-            if (shortest_alarm != 9999989) {
-                std::cout << "    Alarm: " << shortest_alarm << " minutes before" << std::endl;
-            }
-            else {
-                shortest_alarm = 0;
+                if (shortest_alarm != 9999989) {
+                    std::cout << "    Alarm: " << shortest_alarm << " minutes before" << std::endl;
+                    appointment.alarm              = 1;
+                    appointment.advance            = shortest_alarm;
+                    appointment.advanceUnits       = advMinutes;
+                }
+
+            } // numalarms
+            else if (uidmatched == -1) {
+                appointment.alarm              = 0;
+                // we can't store the alarm if it's not enabled so just dummy values here
+                appointment.advance            = 0;
+                appointment.advanceUnits       = advMinutes;
             }
 
 
@@ -332,20 +392,21 @@ int main(int argc, char **argv) {
 
             // TODO: final repetition checks, need to test COUNT, EXDATE, RDATE thoroughly
 
-// TODO: operate directly on Appointment instead of these temporary values
-            tm repeatEnd;
-            repeatEnd.tm_year   = 0;
-            repeatEnd.tm_mon   = 0;
-            repeatEnd.tm_mday  = 0;
-            repeatEnd.tm_wday  = 0;
-            int repeatForever = 0;
-            int repeatFrequency = 0;
-            repeatTypes repeatType = repeatNone; // default no repeat
-            int repeatWeekstart = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
-            DayOfMonthType repeatDay;
-            int repeatDays[7]; for (int i = 0; i < 7; i++) repeatDays[i] = 0;
-            int exceptions = 0;
-            tm *exception = nullptr; // this is an array, yikes
+            // declare some saine defaults to start with
+            if (uidmatched == -1) { // will already have been set if it's uidmatched
+                appointment.repeatType         = repeatNone;
+                appointment.repeatForever      = 0;
+                appointment.repeatEnd.tm_year  = 0;
+                appointment.repeatEnd.tm_mon   = 0;
+                appointment.repeatEnd.tm_mday  = 0;
+                appointment.repeatEnd.tm_wday  = 0;
+                appointment.repeatFrequency    = 0;
+                appointment.repeatWeekstart    = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
+                for (int i = 0; i < 7; i++) appointment.repeatDays[i] = 0;
+    //            appointment.repeatDay          = 0;
+                appointment.exceptions         = 0;
+                appointment.exception          = nullptr; // this is an array, yikes
+            }
 
             // this assumes there's only ever one RRULE property (palm can only support one anyway)
             icalproperty *rrule = icalcomponent_get_first_property(c, ICAL_RRULE_PROPERTY);
@@ -359,29 +420,32 @@ int main(int argc, char **argv) {
 
                     // there's an until date, use that
                     time_t until_time_t = icaltime_as_timet_with_zone(recur.until, icaltime_get_timezone(recur.until));
-                    repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
-                    timegm(&end_tm);
+                    appointment.repeatEnd = *gmtime(&until_time_t); // dereference to avoid subsequent calls overwriting
+                    timegm(&appointment.repeatEnd); // needed?
+                    appointment.repeatEnd.tm_hour = 23; // as below
+                    appointment.repeatEnd.tm_min = 59;
+                    appointment.repeatEnd.tm_sec = 59;
                 }
                 else if (recur.count == 0) {
 
                     // no until date, for the moment assume repeating forever
-                    repeatForever = 1;
+                    appointment.repeatForever = 1;
                 }
                 else {
 
                     //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
-                    repeatEnd = start_tm; // this should already be UTC
+                    appointment.repeatEnd = appointment.begin; // this should already be UTC
                     // we add count * freq, but plam os ends on the day specified
                     // end last moment of the day before (we'll have to subtract that day for them later...)
-                    repeatEnd.tm_hour = 23;
-                    repeatEnd.tm_min = 59;
-                    repeatEnd.tm_sec = 59;
+                    appointment.repeatEnd.tm_hour = 23;
+                    appointment.repeatEnd.tm_min = 59;
+                    appointment.repeatEnd.tm_sec = 59;
                 }
 
-                repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
+                appointment.repeatFrequency = recur.interval < 1 ? 1 : recur.interval; // 1 or INTERVAL
 
                 // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
-                repeatWeekstart = weekday2int(recur.week_start);
+                appointment.repeatWeekstart = weekday2int(recur.week_start);
 
                 icalrecurrencetype_frequency freq = recur.freq;
                 if (freq == ICAL_NO_RECURRENCE || 
@@ -390,34 +454,34 @@ int main(int argc, char **argv) {
                         freq == ICAL_HOURLY_RECURRENCE) {
 
                     // palm doesn't support anything less than daily, so no repeating
-                    repeatType = repeatNone;
+                    appointment.repeatType = repeatNone;
                     std::cout << "    Unsupported frequency, repeating disabled!" << std::endl;
                 }
                 else if (freq == ICAL_DAILY_RECURRENCE) {
 
                     std::cout << "    Repeating daily" << std::endl;
-                    repeatType = repeatDaily;
+                    appointment.repeatType = repeatDaily;
 
-                    if (!repeatForever && recur.count != 0) {
-                        repeatEnd.tm_mday += recur.count - 1;
-                        timegm(&repeatEnd);
+                    if (!appointment.repeatForever && recur.count != 0) {
+                        appointment.repeatEnd.tm_mday += recur.count - 1;
+                        timegm(&appointment.repeatEnd);
                     }
                 }
                 else if (freq == ICAL_WEEKLY_RECURRENCE) {
 
                     std::cout << "    Repeating weekly" << std::endl;
-                    repeatType = repeatWeekly; // repeatDays from BYDAY
+                    appointment.repeatType = repeatWeekly; // repeatDays from BYDAY
 
                     // need to loop as there might be more than one day..?
                     for (int i = 0; recur.by_day[i] != ICAL_RECURRENCE_ARRAY_MAX; i++) {
                         int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[i]));
-                        repeatDays[day] = 1;
+                        appointment.repeatDays[day] = 1;
                         std::cout << "        Repeating day " << day << std::endl;
                     }
 
-                    if (!repeatForever && recur.count != 0) {
-                        repeatEnd.tm_mday += recur.count*7 - 1;
-                        timegm(&repeatEnd);
+                    if (!appointment.repeatForever && recur.count != 0) {
+                        appointment.repeatEnd.tm_mday += recur.count*7 - 1;
+                        timegm(&appointment.repeatEnd);
                     }
                 }
                 else if (freq == ICAL_MONTHLY_RECURRENCE) {
@@ -427,10 +491,10 @@ int main(int argc, char **argv) {
                     if (recur.by_month_day[0] != ICAL_RECURRENCE_ARRAY_MAX) { // BYMONTHDAY
 
                         // nothing extra to set, palm will just assume it's the date of the start
-                        repeatType = repeatMonthlyByDate;
+                        appointment.repeatType = repeatMonthlyByDate;
                         // day of the month in by day repeat - this is done in pilot-datebook, but doesn't seem needed based on pi-datebook.h
-                        repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
-                        std::cout << "        Repeating on " << start_tm.tm_mday << std::endl;
+                        appointment.repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
+                        std::cout << "        Repeating on " << appointment.begin.tm_mday << std::endl;
                     }
                     else { // BYDAY   
            
@@ -440,50 +504,50 @@ int main(int argc, char **argv) {
                             int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
 
                             // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
-                            repeatDay = (DayOfMonthType)((week - 1)*7 + day);
+                            appointment.repeatDay = (DayOfMonthType)((week - 1)*7 + day);
 
                             std::cout << "        Repeating the " << day << " of week " << week <<
-                                " (enum " << repeatDay << " " << DayOfMonthString[repeatDay] << ")" << std::endl;
+                                " (enum " << appointment.repeatDay << " " << DayOfMonthString[appointment.repeatDay] << ")" << std::endl;
 
-                            repeatType = repeatMonthlyByDay; 
+                            appointment.repeatType = repeatMonthlyByDay; 
                         }
                         else {
                             std::cout << "        Unexpected repeat???" << std::endl;
                         }
                     }
 
-                    if (!repeatForever && recur.count != 0) {
-                        repeatEnd.tm_mon += recur.count;
-                        repeatEnd.tm_mday--;
-                        timegm(&repeatEnd);
+                    if (!appointment.repeatForever && recur.count != 0) {
+                        appointment.repeatEnd.tm_mon += recur.count;
+                        appointment.repeatEnd.tm_mday--;
+                        timegm(&appointment.repeatEnd);
                     }
                 }
                 else if (freq == ICAL_YEARLY_RECURRENCE) {
                     std::cout << "    Repeating yearly" << std::endl;
-                    repeatType = repeatYearly;
+                    appointment.repeatType = repeatYearly;
 
-                    if (!repeatForever && recur.count != 0) {
-                        repeatEnd.tm_year += recur.count;
-                        repeatEnd.tm_mday--;
-                        timegm(&repeatEnd);
+                    if (!appointment.repeatForever && recur.count != 0) {
+                        appointment.repeatEnd.tm_year += recur.count;
+                        appointment.repeatEnd.tm_mday--;
+                        timegm(&appointment.repeatEnd);
                     }
                 }
                 else {
                     std::cout << "    Unknown repeat frequency" << std::endl;
                 }
-                if (!repeatForever) {
-                    std::cout << "        Until " << asctime(&repeatEnd);
+                if (!appointment.repeatForever) {
+                    std::cout << "        Until " << asctime(&appointment.repeatEnd);
                 }
 
 
                 /* argh exceptions */
 
-                exceptions = icalcomponent_count_properties(c, ICAL_EXDATE_PROPERTY);
-                if (exceptions != 0) {
-                    std::cout << "    There are " << exceptions << " exceptions" << std::endl;
+                appointment.exceptions = icalcomponent_count_properties(c, ICAL_EXDATE_PROPERTY);
+                if (appointment.exceptions != 0) {
+                    std::cout << "    There are " << appointment.exceptions << " exceptions" << std::endl;
                 }
 
-                exception = (tm*)malloc(exceptions * sizeof(tm)); // this should be freed by free_Appointment later
+                appointment.exception = (tm*)malloc(appointment.exceptions * sizeof(tm)); // this should be freed by free_Appointment later
 
                 int exceptionat = 0;
                 for(icalproperty *exdatep = icalcomponent_get_first_property(c, ICAL_EXDATE_PROPERTY); exdatep != 0;
@@ -492,110 +556,24 @@ int main(int argc, char **argv) {
                     icaltimetype exdate = icalproperty_get_exdate(exdatep);
                     time_t exdate_time_t = icaltime_as_timet_with_zone(exdate, icaltime_get_timezone(exdate));
 
-                    exception[exceptionat] = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
-                    timegm(&exception[exceptionat]); // localtime to UTC
-                    std::cout << "        Excluding " << asctime(&exception[exceptionat]);
+                    appointment.exception[exceptionat] = *gmtime(&exdate_time_t); // dereference to avoid subsequent calls overwriting
+                    timegm(&appointment.exception[exceptionat]); // localtime to UTC
+                    std::cout << "        Excluding " << asctime(&appointment.exception[exceptionat]);
                 } // for exdatep
             } // rrule
 
 
-// TODO: move this appointment creation earlier so that we directly access it instead of using temporary initialisers
+            /* phew, done with this event */
 
-// use event UID to detect duplicates & merge (Google seems to split things out sometimes)
-icalproperty *uidp = icalcomponent_get_first_property(c, ICAL_UID_PROPERTY);
-
-std::string uid("");
-if (uidp != nullptr) {
-    uid = icalproperty_get_uid(uidp);
-    std::cout << "    UID: " << uid << std::endl;
-}
-
-int uidmatched = -1;
-for (int i = 0; i < uids.size(); i++) {
-    if (uids[i] == uid && uid != "") {
-        std::cout << "matching previous appt" << std::endl;
-        uidmatched = i;
-        break;
-    }
-}
-
-
-            // an annoying round about route from const char* to std::string to char*
-            // https://stackoverflow.com/questions/7352099/stdstring-to-char
-            char *summary_c2 = new char[summary.length()+1];
-            strcpy(summary_c2, summary.c_str());
-            char *note_c = nullptr;
-            if (note.length() > 0) { // note might be empty
-                note_c = new char[note.length()+1];
-                strcpy(note_c, note.c_str());
-            }
-
-            // store information about this event in the pilot-link struct
-            // see pi-datebook.h for details of format
-
-            Appointment appointment;
-if (uidmatched != -1) {
-    appointment = Appointments[uidmatched];
-//std::cout << appointment.description << std::endl;
-// if this uid exists twice, assume the later one in the file is newer and overwrite
-
-}
-//else {
-//}
-
-            // TODO: only copy if the appointment doesn't already exist
-
-            if (icaltime_is_date(start) && icaltime_is_date(end))
-                appointment.event          = 1;
-            else
-                appointment.event          = 0;
-            appointment.begin              = start_tm;
-            appointment.end                = end_tm;
-            if (doalarms == true && shortest_alarm != 0) {
-                appointment.alarm              = 1;
-                appointment.advance            = shortest_alarm;
+            // store the Appointment, either overwriting itself in the list of appointments or adding a new one
+            if (uidmatched != -1) {
+                Appointments[uidmatched] = appointment;
             }
             else {
-                appointment.alarm              = 0;
-                appointment.advance            = 0;
-                // setting advance here doesn't work, we can't store the alarm if it's not enabled
+                Appointments.push_back(appointment);
+                uids.push_back(uid);
             }
-            appointment.advanceUnits       = advMinutes;
-            appointment.repeatType         = repeatType;
-            appointment.repeatForever      = repeatForever;
-            appointment.repeatEnd.tm_year  = repeatEnd.tm_year;
-            appointment.repeatEnd.tm_mon   = repeatEnd.tm_mon;
-            appointment.repeatEnd.tm_mday  = repeatEnd.tm_mday;
-            appointment.repeatEnd.tm_wday  = repeatEnd.tm_wday;
-            appointment.repeatFrequency    = repeatFrequency;
-            appointment.repeatDay          = repeatDay;
-            for (int i = 0; i < 7; i++) appointment.repeatDays[i] = repeatDays[i];
-            appointment.repeatWeekstart    = repeatWeekstart;
-            appointment.exceptions         = exceptions;
-            appointment.exception          = exception;
-            appointment.description        = summary_c2; // just don't set these if null?
-            appointment.note               = note_c;
-
-            // TODO: keep a list of appointments instead of appointment bufs
-            //       and keep a list of UIDs so that we can merge by them
-
-//            Appointment_bufs.push_back(pi_buffer_new (0xffff));
-//            pack_Appointment(&appointment, Appointment_bufs.back(), datebook_v1);
-
-
-if (uidmatched != -1) {
-    Appointments[uidmatched] = appointment;
-}
-else {
-            Appointments.push_back(appointment);
-    uids.push_back(uid);
-}
-
             std::cout << "    Stored for sync" << std::endl << std::endl;
-
-
-
-
 
         } // for c
 //        if (c != nullptr) icalcomponent_free(c);
@@ -610,9 +588,8 @@ else {
     /** palm pilot communication **/
 
     // TODO: separate out into its own file/function? (should make reading easier?)
-    // TODO: check what all the pilot-link functions return and what are fatal and we need to exit on etc
+    // TODO: check what all the pilot-link functions return and what are fatal and we need to exit on etc and what needs to be cleaned up
 
-    int db; // handle to the database
     int sd = -1; // socket descriptor (like fid?)
     int result;
 
@@ -649,7 +626,7 @@ else {
     if (sd < 0) {
         fprintf(stderr, "\n    Error accepting data on %s\n", port.c_str());
         pi_close(sd);
-        return -1;
+        return EXIT_FAILURE;
     }
 
     if (!plu_quiet && isatty(fileno(stdout))) {
@@ -659,7 +636,7 @@ else {
     if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
         fprintf(stderr, "\n    Error read system info on %s\n", port.c_str());
         pi_close(sd);
-        return -1;
+        return EXIT_FAILURE;
     }
 
     dlp_ReadUserInfo(sd, &User);
@@ -670,15 +647,16 @@ else {
     }
 
     /* Open the Datebook's database, store access handle in db */
+    int db; // handle to the calendar database
     if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
         fprintf(stderr,"    ERROR: Unable to open DatebookDB on Palm\n");
         dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
         // (char*) is a little unsafe, but function does not edit the string
         pi_close(sd);
-        return 0;
+        return EXIT_FAILURE;
     }
     else {
-        std::cout << "    Datebook opened." << std::endl;
+        std::cout << "    Datebook opened." << std::endl << std::endl;
     }
 
     if (overwrite && !readonly) {
@@ -695,20 +673,23 @@ else {
     // TODO: read existing calendar events off of palm pilot add add ONLYNEW events
     // store UID in note and then grab it out UID for updating? or is datetime + name good enough? (config option?)
 
-
+    // TODO: only copy if the appointment doesn't already exist
 
     // send the appointments across one by one
     if (!readonly) {
         std::cout << "    Writing calendar appointments...";
         for (int i = 0; i < Appointments.size(); i++) {
 
-
-            // TODO: skip if it's older than FROMYEAR and repeating until now
-//            if (start.year < fromyear) {
-//                std::cout << "    Skipping" << std::endl;
-//                continue;
-//            }
-
+            // skip if it's older than FROMYEAR and repeating until now
+            // move this logic earlier and store in an array of toskip?
+            if ((Appointments[i].begin.tm_year + 1900) < fromyear && 
+                    !Appointments[i].repeatForever && 
+                    !((Appointments[i].repeatEnd.tm_year + 1900) >= fromyear)) {
+//                if (Appointments[i].description != nullptr) {
+//                    std::cout << "        Skipping " << Appointments[i].description << std::endl;
+//                }
+                continue;
+            }
 
             // pack the appointment struct for copying to the palm
 	        pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
@@ -728,7 +709,7 @@ else {
 
     /* Close the database */
     dlp_CloseDB(sd, db);
-    std::cout << "    Datebook closed." << std::endl;
+    std::cout << "    Datebook closed." << std::endl << std::endl;
 
     /* Tell the user who it is, with a different PC id. */
     User.lastSyncPC     = 0x00010000;
@@ -739,12 +720,12 @@ else {
     // (char*) is a little unsafe, but function does not edit the string
     if (dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointment to Palm.\n") < 0) {
         pi_close(sd);
-        return 0;
+        return EXIT_FAILURE;
     }    
 
     if (dlp_EndOfSync(sd, 0) < 0)  {
         pi_close(sd);
-        return 0;
+        return EXIT_FAILURE;
     }
 
     // work around for hanging on close due (probably) a race condition closing out libusb
@@ -775,5 +756,5 @@ else {
         std::cout << "    Error closing socket to plam pilot" << std::endl << std::endl;
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }
