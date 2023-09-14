@@ -22,9 +22,6 @@
 #include "libusb.h"
 #include "sync-calendar2.h"
 
-// TODO: adding only new events, ONLYNEW=true
-// TODO: quit nicely catching errors and whatnot (try catch finally?)
-
 // add log4cplus for logging?
 
 int main(int argc, char **argv) {
@@ -33,7 +30,7 @@ int main(int argc, char **argv) {
     std::string configfile("datebook.cfg");
     std::string uri, port, timezone("UTC");
     int fromyear = 0;
-    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, insecure = false;
+    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, onlynew = false, insecure = false;
     bool portoverride = false, urioverride = false; // command line argument overrides config file argument
 
     // use to keep track if something happened or not (often for exiting on an error)
@@ -125,6 +122,7 @@ int main(int argc, char **argv) {
     NON_FAIL_CFG(TIMEZONE, timezone)
     NON_FAIL_CFG(FROMYEAR, fromyear)
     NON_FAIL_CFG(OVERWRITE, overwrite)
+    NON_FAIL_CFG(ONLYNEW, onlynew)
     NON_FAIL_CFG(DOALARMS, doalarms)
     NON_FAIL_CFG(INSECURE, insecure)
     std::cout << std::endl << std::flush;
@@ -211,7 +209,8 @@ int main(int argc, char **argv) {
 
     // store all of the calendar events packed ready for copying to the palm
     std::vector<Appointment> Appointments;
-    std::vector<std::string> uids; // for detecting & merging duplicates
+    std::vector<std::string> uids; // for detecting & merging duplicate ical entries
+    std::vector<bool> docopy; // actually copy to the palm?
     
     // parse the string into a series of components to iterate through
     icalcomponent* components = icalparser_parse_string(icaldata.c_str());
@@ -596,6 +595,7 @@ int main(int argc, char **argv) {
             else {
                 Appointments.push_back(appointment);
                 uids.push_back(uid);
+                docopy.push_back(true);
             }
             std::cout << "    Stored for sync" << std::endl << std::endl;
 
@@ -629,7 +629,7 @@ int main(int argc, char **argv) {
     std::cout << "    Listening for incoming connection on " << port << "... " << std::flush;
 
     if (pi_listen(sd, 1) < 0) {
-        std::cout << "    ERROR listening on " << port << std::endl;
+        std::cout << std::endl << "    ERROR listening on " << port << std::endl;
         pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
@@ -677,7 +677,7 @@ int main(int argc, char **argv) {
         // delete ALL records
         std::cout << "    Deleting existing Palm datebook..." << std::flush;
         if (dlp_DeleteRecord(sd, db, 1, 0) < 0) {
-            std::cout << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
+            std::cout << std::endl << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
             // (char*) is a little unsafe, but function does not edit the string
             dlp_AddSyncLogEntry(sd, (char*)"Unable to delete DatebookDB records.\n"); // log on palm
             pi_close_fixed(sd);
@@ -686,9 +686,139 @@ int main(int argc, char **argv) {
         std::cout << " done!" << std::endl << std::flush;
     }
 
-
-
     // TODO: timezone conversion to localtime
+
+
+
+
+
+
+
+
+
+
+    if (!overwrite) {
+        std::cout << "    Getting list of datebook entries for merging... ";
+
+        #define REC_MAX 10000  // we're betting no one's got more than 10k records
+        recordid_t recids[REC_MAX];
+        int reccount;
+
+        if (dlp_ReadRecordIDList(sd, db, 0, 0, REC_MAX, recids, &reccount) < 0) {
+            // this fails with zero records, so zero it is
+            reccount = 0;
+        }
+        std::cout << "done, " << reccount << " records" << std::endl;
+        if (reccount == REC_MAX) {
+            std::cout << "    WARNING " << REC_MAX << " record limit hit, some entries may not have been processed..." << std::endl;
+        }
+
+        std::cout << "    Reading existing datebook entries for merging... ";
+        if (!onlynew && !readonly) {
+            std::cout << std::endl << "    Deleting matching entries for updating... ";
+        }
+        std::cout << std::flush;
+
+        // get the existing datebook entries
+        // if onlynew is set then sync only entries that don't already appear (matched by date and time)
+        // otherwise overwrite those previous entries, in effect updating them
+        for (int i = 0; i < reccount; i++) {
+            int attr; // record attributes so we don't deal with deleted or archived records?
+
+//            recordid_t recid; // for deleting specific records
+
+            pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff); // store the read record
+//            int len = dlp_ReadRecordByIndex(sd, db, i, Appointment_buf, &recid, &attr, 0);
+            dlp_ReadRecordById(sd, db, recids[i], Appointment_buf, 0, &attr, 0);
+
+            // we've reached the end of the records
+//            if (len < 0)
+//                break;
+
+            // records marked for deletion or archival are no longer on the palm after sync so skip as if they don't exist
+            if ((attr & dlpRecAttrDeleted) || (attr & dlpRecAttrArchived)) {
+                pi_buffer_free(Appointment_buf);
+                continue;
+            }
+
+            // convert the packed data to something we can manipulate
+            struct Appointment appointment;
+            unpack_Appointment(&appointment, Appointment_buf, datebook_v1);
+
+//            std::cout << appointment.description << std::endl;
+//std::cout << asctime(&appointment.end) << std::endl;
+
+bool matched = false;
+
+            // compare against the created appointments
+            time_t starttime = timegm(&appointment.begin);
+            time_t endtime = timegm(&appointment.end);
+
+
+
+
+//std::cout << asctime(&appointment.begin);
+
+            for (int j = 0; j < Appointments.size(); j++) {
+                if (strcmp(appointment.description, Appointments[j].description) == 0 &&
+                        difftime(starttime, timegm(&Appointments[j].begin)) == 0  &&
+                        // palm issues end time = start time for all day events, so just check if it's an all day instead
+                        (difftime(endtime, timegm(&Appointments[j].end)) == 0 || appointment.event == 1 && Appointments[j].event == 1)) {
+
+//std::cout << "    has a match with " << Appointments[j].description << std::endl;
+//std::cout << asctime(&Appointments[j].begin);
+//std::cout << difftime(starttime, timegm(&Appointments[j].begin)) << std::endl;
+//std::cout << difftime(endtime, timegm(&Appointments[j].end)) << std::endl;
+matched = true;
+
+                    if (onlynew) {
+                        // if the event already exists then we shouldn't copy a new one if only new events are to be copied
+                        docopy[j] = false;
+//                        std::cout << "do copy set false" << std::endl;
+                    }
+                    else {
+                        // if we're OK with copying existing events, we don't want loads of them to show up so delete the existing one
+                        if (!readonly) {
+//                            dlp_DeleteRecord(sd, db, 0, recid);
+                            dlp_DeleteRecord(sd, db, 0, recids[i]);
+
+//dlp_ResetDBIndex(sd, db);
+//std::cout << "    dropping record" << std::endl;
+                        }
+                    }
+
+//                    break; // we expect there to be only one matching event by summary, date & time, break out
+                }
+
+//else if (strcmp(appointment.description, Appointments[j].description) == 0) {
+//            std::cout << "MATCHCHHH" << Appointments[j].description << std::endl;
+//std::cout << asctime(&Appointments[j].begin) << std::endl;
+//std::cout << asctime(&Appointments[j].end) << std::endl;
+//}
+
+
+            } // for Appointments
+
+//std::cout << std::endl;
+
+//if (!matched) std::cout << "NOT MATCHED" << std::endl;
+            
+            // free up used resources
+            free_Appointment(&appointment);
+            pi_buffer_free(Appointment_buf);
+        }
+        std::cout << "done!" << std::endl << std::flush;
+    }
+
+
+//dlp_CleanUpDatabase(sd, db);
+
+
+
+
+
+
+
 
     // TODO: read existing calendar events off of palm pilot add add ONLYNEW events
     // store UID in note and then grab it out UID for updating? or is datetime + name good enough? (config option?)
@@ -697,8 +827,14 @@ int main(int argc, char **argv) {
 
     // send the appointments across one by one
     if (!readonly) {
-        std::cout << "    Writing calendar appointments..." << std::flush;
+//    if (0) {
+        std::cout << "    Writing calendar appointments... " << std::flush;
         for (int i = 0; i < Appointments.size(); i++) {
+
+            // skip records not marked for transfer
+            if (docopy[i] == false) {
+                continue;
+            }
 
             // skip if it's older than FROMYEAR and repeating until now
             // move this logic earlier and store in an array of toskip?
@@ -712,9 +848,11 @@ int main(int argc, char **argv) {
             }
 
             // pack the appointment struct for copying to the palm
-	        pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
-	        pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
+            pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff);
+            pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
             // could free here? should be fine to delete some things after the appointment is packed
+
+//std::cout << "copying " << Appointments[i].description << std::endl;
 
             // send to the palm, this will return < 0 if there's an error - might want to do check that?
             dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
@@ -724,7 +862,7 @@ int main(int argc, char **argv) {
 //            free_Appointment(&Appointments[i]); // also frees string pointers (or just let these live until quitting hopefully destroys all)
 
         }
-        std::cout << " done!" << std::endl << std::flush;
+        std::cout << "done!" << std::endl << std::flush;
     }
 
     // close the datebook
@@ -741,14 +879,7 @@ int main(int argc, char **argv) {
     // (char*) is a little unsafe, but function does not edit the string
     dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointments to Palm.\n"); // log on palm
 
-    // close the palm's connection
-    if (dlp_EndOfSync(sd, 0) < 0)  {
-        pi_close_fixed(sd);
-        return EXIT_FAILURE;
-    }
-    std::cout << "    Disconnected!" << std::endl << std::flush;
-
-    // close the connection on our end
+    // close the connection
     if (pi_close_fixed(sd) < 0) {
         return EXIT_FAILURE;
     }

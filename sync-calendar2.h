@@ -32,6 +32,13 @@ size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmem
 // it looks like this might be a race condition with a mutex staying locked
 
 int pi_close_fixed(int sd) {
+    std::cout << "    Closing connection... " << std::flush;
+
+    // close the palm's connection
+    dlp_EndOfSync(sd, 0);
+
+    std::cout << "disconnecting... " << std::flush;
+
     // work around for hanging on close due (probably) a race condition closing out libusb
     bool failed = false;
     pi_socket_t *ps = find_pi_socket(sd);
@@ -51,16 +58,19 @@ int pi_close_fixed(int sd) {
         failed = true;
     }
     if (failed) {
-        std::cout << "    Probably hanging on a libusb race condition now..." << std::endl << std::flush;
+        std::cout << std::endl << "    WARNING probably hanging on a libusb race condition now..." << std::endl << std::flush;
     }
     // the glorious one line version without error handling
     // libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
 
     // close the link to the palm
     if (pi_close(sd) < 0) {
-        std::cout << "    Error closing socket to plam pilot" << std::endl;
+        std::cout << std::endl << "    ERROR closing socket to plam pilot" << std::endl << std::flush;
         return -1;
     }
+
+    std::cout << "done!" << std::endl << std::flush;
+
     return 0;
 }
 
