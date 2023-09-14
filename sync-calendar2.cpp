@@ -1,4 +1,4 @@
-// TODO: copyright
+// TODO: copyright, GPLv2
 
 // sync-calendar attempt to read ical file and write to palm pilot
 // if we're really good also try to not repeat any event that already exists
@@ -36,37 +36,47 @@ int main(int argc, char **argv) {
     bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, insecure = false;
     bool portoverride = false, urioverride = false; // command line argument overrides config file argument
 
+    // use to keep track if something happened or not (often for exiting on an error)
+    bool failed = true;
 
     /** read in command line arguments **/
+
+    std::cout << "    ==> Reading arguments <==" << std::endl << std::flush;
 
     // based on https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
     for (int c; (c = getopt(argc, argv, "hp:u:c:")) != -1; ) { // man 3 getopt
         switch (c) {
             case 'h': // port
-                std::cout << "sync-calendar2, a tool for copying an ical to palm" << std::endl << std::endl;
-                std::cout << "Usage: sync-calendar2 [options]" << std::endl << std::endl;
-                std::cout << "Options:" << std::endl << std::endl;
-                std::cout << "    -c  Specify config file (default datebook.cfg)" << std::endl;
-                std::cout << "    -h  Print this help message and quit" << std::endl;
-                std::cout << "    -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
-                std::cout << "    -u  Override calendar URI" << std::endl;
+                std::cout << "    Argument -h" << std::endl;
+                std::cout << std::endl;
+                std::cout << "    sync-calendar2, a tool for copying an ical calendar to Palm" << std::endl << std::endl;
+                std::cout << "    Usage: sync-calendar2 [options]" << std::endl << std::endl;
+                std::cout << "    Options:" << std::endl << std::endl;
+                std::cout << "        -c  Specify config file (default datebook.cfg)" << std::endl;
+                std::cout << "        -h  Print this help message and quit" << std::endl;
+                std::cout << "        -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
+                std::cout << "        -u  Override calendar URI" << std::endl;
                 std::cout << std::endl;
                 return EXIT_SUCCESS;
 
             case 'u': // uri
+                failed = false;
                 uri = optarg;
-                std::cout << "Argument -u: " << uri << std::endl;
+                std::cout << "    Argument -u: " << uri << std::endl;
                 urioverride = true;
                 break;
 
             case 'p': // port
+                failed = false;
                 port = optarg;
-                std::cout << "Argument -p: " << port << std::endl;
+                std::cout << "    Argument -p: " << port << std::endl;
                 portoverride = true;
                 break;
 
             case 'c': // config file
+                failed = false;
                 configfile = optarg;
+                std::cout << "    Argument -c: " << configfile << std::endl;
                 break;
 
             case '?':
@@ -77,21 +87,29 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (failed) {
+        std::cout << "    No arguments" << std::endl << std::flush;
+    }
+
+    std::cout << std::endl << std::flush;
+
 
     /** read in configuration settings using libconfig **/
+
+    std::cout << "    ==> Reading configuration <==" << std::endl << std::flush;
 
     libconfig::Config cfg;
     cfg.setOption(libconfig::Config::OptionAutoConvert, true); // float to int and viceversa?
     try {
-        std::cout << "Reading from " << configfile << std::endl;
+        std::cout << "    Reading from " << configfile << std::endl;
         cfg.readFile(configfile);
     }
     catch (const libconfig::FileIOException &fioex) {
-        std::cerr << "I/O error while reading" << std::endl;
+        std::cerr << "    I/O error while reading" << std::endl;
         return EXIT_FAILURE;
     }
     catch (const libconfig::ParseException &pex) {
-        std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
+        std::cerr << "    Parse error at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
     }
 
     // use macros to tidy up reading config options
@@ -109,16 +127,17 @@ int main(int argc, char **argv) {
     NON_FAIL_CFG(OVERWRITE, overwrite)
     NON_FAIL_CFG(DOALARMS, doalarms)
     NON_FAIL_CFG(INSECURE, insecure)
-    std::cout << std::endl;
+    std::cout << std::endl << std::flush;
 
 
     /** read in calendar data using libcurl **/
 
-    // use to mark for exiting on an error
-    bool failed = false;
+    std::cout << "    ==> Downloading calendar <==" << std::endl << std::flush;
+
     // the downloaded ical data
     std::string icaldata;
 
+    failed = false;
     CURL *curl;
     CURLcode res;
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -151,7 +170,7 @@ int main(int argc, char **argv) {
             long http_code = 0;
             curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
             if (http_code != 200) {
-                std::cerr << "error fetching URI, http response code " << http_code << std::endl;
+                std::cerr << "    Error fetching URI, http response code " << http_code << std::endl;
                 failed = true;
             }
         }
@@ -160,19 +179,22 @@ int main(int argc, char **argv) {
         curl_easy_cleanup(curl);
     }
     else {
-        std::cerr << "error initialising curl" << std::endl;
+        std::cerr << "    Error initialising curl" << std::endl;
     }
 
     curl_global_cleanup();
  
     if (failed) {
         // something went wrong along the way, exit
-        std::cerr << "exiting after error" << std::endl;
+        std::cerr << "    Exiting after error" << std::endl;
         return EXIT_FAILURE;
     }
+    std::cout << "    Calendar downloaded successfully" << std::endl << std::endl << std::flush;
 
 
     /** parse calendar using libical **/
+
+    std::cout << "    ==> Parsing calendar <==" << std::endl << std::flush;
 
     // ical specifies components, properties, values, and parameters and I think there's
     // a bit of a metaphor relating that to HTML, with COMPONENTS corresponding to an
@@ -200,6 +222,8 @@ int main(int argc, char **argv) {
     // if there is some valid ical data to work through
     if (components != nullptr) {
 
+        std::cout << "    Calendar parsed successfully" << std::endl << std::endl << std::flush;
+
         // the specific component we're on in our iteration
         icalcomponent *c;
 
@@ -212,7 +236,7 @@ int main(int argc, char **argv) {
             // every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
             // palm won't take an event with a description
 
-            std::cout << "Processing event" << std::endl;
+            std::cout << "    ==> Processing event <==" << std::endl;
 
 
             /* create Appointment if it doesn't already exist */
@@ -587,83 +611,79 @@ int main(int argc, char **argv) {
 
     /** palm pilot communication **/
 
-    // TODO: separate out into its own file/function? (should make reading easier?)
-    // TODO: check what all the pilot-link functions return and what are fatal and we need to exit on etc and what needs to be cleaned up
+    std::cout << "    ==> Downloading to Palm <==" << std::endl << std::flush;
 
-    int sd = -1; // socket descriptor (like fid?)
-    int result;
+    // a lot of this comes from pilot-link userland.c, pilot-install-datebook.c, or pilot-read-ical.c
 
-    PilotUser User;
-
-    int plu_quiet = 0; // don't surpress some output
-    int plu_timeout = 0; // "Use timeout <timeout> seconds", "<timeout>" - wait forwever with 0?
-
-    // from pilot-link userland.c
-    SysInfo sys_info;
-
+    int sd = -1; // socket descriptor (like an fid)
     if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
-        fprintf(stderr, "\n    Unable to create socket '%s'\n", port.c_str());
+        std::cout << "    ERROR unable to create socket '" << port << "'" << std::endl;
         return EXIT_FAILURE;
     }
 
     if (pi_bind(sd, port.c_str()) < 0) {
-        fprintf(stderr, "    Unable to bind to port: %s\n", port.c_str());
+        std::cout << "    ERROR unable to bind to port: " << port << std::endl;
         return EXIT_FAILURE;
     }
 
-    if (!plu_quiet && isatty(fileno(stdout))) {
-        printf("\n    Listening for incoming connection on %s... ", port.c_str());
-        fflush(stdout);
-    }
+    std::cout << "    Listening for incoming connection on " << port << "... " << std::flush;
 
     if (pi_listen(sd, 1) < 0) {
-        fprintf(stderr, "\n    Error listening on %s\n", port.c_str());
-        pi_close(sd);
+        std::cout << "    ERROR listening on " << port << std::endl;
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
 
-    sd = pi_accept_to(sd, 0, 0, plu_timeout);
+    sd = pi_accept_to(sd, 0, 0, 0); // last argument is a timeout in seconds - 0 is wait forever?
     if (sd < 0) {
-        fprintf(stderr, "\n    Error accepting data on %s\n", port.c_str());
-        pi_close(sd);
+        std::cout << "    ERROR accepting data on " << port << std::endl;
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
 
-    if (!plu_quiet && isatty(fileno(stdout))) {
-        printf("connected!\n\n");
-    }
+    std::cout << "connected!" << std::endl;
 
+    SysInfo sys_info;
     if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
-        fprintf(stderr, "\n    Error read system info on %s\n", port.c_str());
-        pi_close(sd);
+        std::cout << "    ERROR reading system info on " << port << std::endl;
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
 
+    PilotUser User;
     dlp_ReadUserInfo(sd, &User);
 
+    // tell the palm we're going to be communicating
     if (dlp_OpenConduit(sd) < 0) {
-        pi_close(sd);
+        std::cout << "    ERROR opening conduit with Palm" << std::endl;
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
 
-    /* Open the Datebook's database, store access handle in db */
-    int db; // handle to the calendar database
+    // open the datebook and store a handle to it in db
+    int db;
     if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
-        fprintf(stderr,"    ERROR: Unable to open DatebookDB on Palm\n");
-        dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n");
+        std::cout << "    ERROR unable to open DatebookDB on Palm" << std::endl;
         // (char*) is a little unsafe, but function does not edit the string
-        pi_close(sd);
+        dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n"); // log on palm
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
     else {
-        std::cout << "    Datebook opened." << std::endl << std::endl;
+        std::cout << "    DatebookDB opened." << std::endl << std::flush;
     }
 
     if (overwrite && !readonly) {
         // delete ALL records
-        std::cout << "    Deleting existing Palm calendar...";
-        result = dlp_DeleteRecord(sd, db, 1, 0);
-        std::cout << " done!" << std::endl << std::endl;
+        std::cout << "    Deleting existing Palm datebook..." << std::flush;
+        if (dlp_DeleteRecord(sd, db, 1, 0) < 0) {
+            std::cout << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
+            // (char*) is a little unsafe, but function does not edit the string
+            dlp_AddSyncLogEntry(sd, (char*)"Unable to delete DatebookDB records.\n"); // log on palm
+            pi_close_fixed(sd);
+            return EXIT_FAILURE;
+        }
+        std::cout << " done!" << std::endl << std::flush;
     }
 
 
@@ -677,7 +697,7 @@ int main(int argc, char **argv) {
 
     // send the appointments across one by one
     if (!readonly) {
-        std::cout << "    Writing calendar appointments...";
+        std::cout << "    Writing calendar appointments..." << std::flush;
         for (int i = 0; i < Appointments.size(); i++) {
 
             // skip if it's older than FROMYEAR and repeating until now
@@ -696,7 +716,7 @@ int main(int argc, char **argv) {
 	        pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
             // could free here? should be fine to delete some things after the appointment is packed
 
-            // send to the palm
+            // send to the palm, this will return < 0 if there's an error - might want to do check that?
             dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
 
             // free up memory
@@ -704,56 +724,33 @@ int main(int argc, char **argv) {
 //            free_Appointment(&Appointments[i]); // also frees string pointers (or just let these live until quitting hopefully destroys all)
 
         }
-        std::cout << " done!" << std::endl << std::endl;
+        std::cout << " done!" << std::endl << std::flush;
     }
 
-    /* Close the database */
+    // close the datebook
     dlp_CloseDB(sd, db);
-    std::cout << "    Datebook closed." << std::endl << std::endl;
+    db = -1;
+    std::cout << "    DatebookDB closed." << std::endl << std::flush;
 
-    /* Tell the user who it is, with a different PC id. */
+    // tell the user who it is, with a different PC id
     User.lastSyncPC     = 0x00010000;
     User.successfulSyncDate = time(NULL);
     User.lastSyncDate     = User.successfulSyncDate;
     dlp_WriteUserInfo(sd, &User);
 
     // (char*) is a little unsafe, but function does not edit the string
-    if (dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointment to Palm.\n") < 0) {
-        pi_close(sd);
-        return EXIT_FAILURE;
-    }    
+    dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointments to Palm.\n"); // log on palm
 
+    // close the palm's connection
     if (dlp_EndOfSync(sd, 0) < 0)  {
-        pi_close(sd);
+        pi_close_fixed(sd);
         return EXIT_FAILURE;
     }
+    std::cout << "    Disconnected!" << std::endl << std::flush;
 
-    // work around for hanging on close due (probably) a race condition closing out libusb
-    failed = false;
-    pi_socket_t *ps = find_pi_socket(sd);
-    if (ps) {
-        pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
-        usb_dev_handle *dev = (usb_dev_handle*)data->ref;
-        libusb_device_handle *dev_handle = dev->handle;
-        libusb_context *ctx = HANDLE_CTX(dev_handle);
-        if (ctx) {
-            libusb_unlock_events(ctx);
-        }
-        else {
-            failed = true;
-        }
-    }
-    else {
-        failed = true;
-    }
-    if (failed) {
-        std::cout << "    Probably hanging on a libusb race condition now..." << std::endl << std::endl;
-    }
-    // the glorious one line version without error handling
-    // libusb_unlock_events((((usb_dev_handle*)((pi_usb_data_t *)find_pi_socket(sd)->device->data)->ref)->handle)->dev->ctx);
-
-    if(pi_close(sd) < 0) {
-        std::cout << "    Error closing socket to plam pilot" << std::endl << std::endl;
+    // close the connection on our end
+    if (pi_close_fixed(sd) < 0) {
+        return EXIT_FAILURE;
     }
 
     return EXIT_SUCCESS;
