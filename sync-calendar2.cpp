@@ -414,6 +414,10 @@ int main(int argc, char **argv) {
             // X EXDATE => exception, exceptions
 
             // TODO: final repetition checks, need to test COUNT, EXDATE, RDATE thoroughly
+// for each daily, weekly, monthly, yearly
+// repeat forever, repeat until, repeat count
+// exclude or move three
+
 
             // declare some saine defaults to start with
             if (uidmatched == -1) { // will already have been set if it's uidmatched
@@ -458,7 +462,7 @@ int main(int argc, char **argv) {
 
                     //  we'll have to figure out what repeatEnd should be based on count, but this depends on frequency...
                     appointment.repeatEnd = appointment.begin; // this should already be UTC
-                    // we add count * freq, but plam os ends on the day specified
+                    // we add count * freq, but palm os ends on the day specified
                     // end last moment of the day before (we'll have to subtract that day for them later...)
                     appointment.repeatEnd.tm_hour = 23;
                     appointment.repeatEnd.tm_min = 59;
@@ -604,6 +608,66 @@ int main(int argc, char **argv) {
         icalcomponent_free(components); // already not null by definition inside this if statement
     } // if components
 
+
+
+
+    // TODO: timezone conversion to localtime
+    // per https://rl.se/convert-utc-to-local-time convert to time_t then back to gm
+
+char *tz = getenv("TZ");
+timezone = "TZ=" + timezone;
+putenv((char*)timezone.c_str());
+
+
+
+
+for (int i = 0; i < Appointments.size(); i++) {
+
+    // no timezone adjustment needed for all day events
+    if (Appointments[i].event) {
+        continue;
+    }
+
+    time_t      stamp;  
+
+    std::cout << asctime(&Appointments[i].begin);
+
+    stamp = mktime(&Appointments[i].begin);
+    Appointments[i].begin = *localtime(&stamp);
+
+    std::cout << asctime(&Appointments[i].begin);
+
+
+    std::cout << asctime(&Appointments[i].end);
+
+    stamp = mktime(&Appointments[i].end);
+    Appointments[i].end = *localtime(&stamp);
+
+    std::cout << asctime(&Appointments[i].end);
+
+
+
+    std::cout << std::endl;
+
+// repeat end? don't need to as it always is 23:59:59 on the day
+// loop exceptions? don't need to because also only a day
+
+
+
+}
+
+
+//put env back the way it was?
+if (tz != nullptr) {
+    timezone = "TZ=" + std::string(tz);
+    putenv((char*)timezone.c_str());
+}
+else {
+    putenv((char*)"TZ=");
+}
+
+
+
     if (!dohotsync) {
         return EXIT_SUCCESS;
     }
@@ -673,6 +737,10 @@ int main(int argc, char **argv) {
         std::cout << "    DatebookDB opened." << std::endl << std::flush;
     }
 
+
+    /* handle datebook manipulation on the palm */
+
+    // delete records if need be
     if (overwrite && !readonly) {
         // delete ALL records
         std::cout << "    Deleting existing Palm datebook..." << std::flush;
@@ -686,17 +754,8 @@ int main(int argc, char **argv) {
         std::cout << " done!" << std::endl << std::flush;
     }
 
-    // TODO: timezone conversion to localtime
-
-
-
-
-
-
-
-
-
-
+    // read existing calendar events off of palm pilot and either add ONLYNEW events or delete existing events to be refreshed/updated
+    // store UID in note and then grab it out UID for updating? or is datetime + name good enough? (config option?)
     if (!overwrite) {
         std::cout << "    Getting list of datebook entries for merging... ";
 
@@ -723,17 +782,10 @@ int main(int argc, char **argv) {
         // if onlynew is set then sync only entries that don't already appear (matched by date and time)
         // otherwise overwrite those previous entries, in effect updating them
         for (int i = 0; i < reccount; i++) {
+
             int attr; // record attributes so we don't deal with deleted or archived records?
-
-//            recordid_t recid; // for deleting specific records
-
             pi_buffer_t *Appointment_buf = pi_buffer_new(0xffff); // store the read record
-//            int len = dlp_ReadRecordByIndex(sd, db, i, Appointment_buf, &recid, &attr, 0);
             dlp_ReadRecordById(sd, db, recids[i], Appointment_buf, 0, &attr, 0);
-
-            // we've reached the end of the records
-//            if (len < 0)
-//                break;
 
             // records marked for deletion or archival are no longer on the palm after sync so skip as if they don't exist
             if ((attr & dlpRecAttrDeleted) || (attr & dlpRecAttrArchived)) {
@@ -745,19 +797,9 @@ int main(int argc, char **argv) {
             struct Appointment appointment;
             unpack_Appointment(&appointment, Appointment_buf, datebook_v1);
 
-//            std::cout << appointment.description << std::endl;
-//std::cout << asctime(&appointment.end) << std::endl;
-
-bool matched = false;
-
             // compare against the created appointments
             time_t starttime = timegm(&appointment.begin);
             time_t endtime = timegm(&appointment.end);
-
-
-
-
-//std::cout << asctime(&appointment.begin);
 
             for (int j = 0; j < Appointments.size(); j++) {
                 if (strcmp(appointment.description, Appointments[j].description) == 0 &&
@@ -765,43 +807,21 @@ bool matched = false;
                         // palm issues end time = start time for all day events, so just check if it's an all day instead
                         (difftime(endtime, timegm(&Appointments[j].end)) == 0 || appointment.event == 1 && Appointments[j].event == 1)) {
 
-//std::cout << "    has a match with " << Appointments[j].description << std::endl;
-//std::cout << asctime(&Appointments[j].begin);
-//std::cout << difftime(starttime, timegm(&Appointments[j].begin)) << std::endl;
-//std::cout << difftime(endtime, timegm(&Appointments[j].end)) << std::endl;
-matched = true;
-
                     if (onlynew) {
+
                         // if the event already exists then we shouldn't copy a new one if only new events are to be copied
                         docopy[j] = false;
-//                        std::cout << "do copy set false" << std::endl;
                     }
                     else {
+
                         // if we're OK with copying existing events, we don't want loads of them to show up so delete the existing one
                         if (!readonly) {
-//                            dlp_DeleteRecord(sd, db, 0, recid);
                             dlp_DeleteRecord(sd, db, 0, recids[i]);
-
-//dlp_ResetDBIndex(sd, db);
-//std::cout << "    dropping record" << std::endl;
                         }
                     }
-
 //                    break; // we expect there to be only one matching event by summary, date & time, break out
                 }
-
-//else if (strcmp(appointment.description, Appointments[j].description) == 0) {
-//            std::cout << "MATCHCHHH" << Appointments[j].description << std::endl;
-//std::cout << asctime(&Appointments[j].begin) << std::endl;
-//std::cout << asctime(&Appointments[j].end) << std::endl;
-//}
-
-
             } // for Appointments
-
-//std::cout << std::endl;
-
-//if (!matched) std::cout << "NOT MATCHED" << std::endl;
             
             // free up used resources
             free_Appointment(&appointment);
@@ -810,24 +830,12 @@ matched = true;
         std::cout << "done!" << std::endl << std::flush;
     }
 
-
-//dlp_CleanUpDatabase(sd, db);
-
-
-
-
-
-
-
-
-    // TODO: read existing calendar events off of palm pilot add add ONLYNEW events
-    // store UID in note and then grab it out UID for updating? or is datetime + name good enough? (config option?)
-
-    // TODO: only copy if the appointment doesn't already exist
+    // some tidying since we've been deleting things, might not do anything
+    dlp_CleanUpDatabase(sd, db);
+    dlp_ResetDBIndex(sd, db);
 
     // send the appointments across one by one
     if (!readonly) {
-//    if (0) {
         std::cout << "    Writing calendar appointments... " << std::flush;
         for (int i = 0; i < Appointments.size(); i++) {
 
@@ -841,9 +849,6 @@ matched = true;
             if ((Appointments[i].begin.tm_year + 1900) < fromyear && 
                     !Appointments[i].repeatForever && 
                     !((Appointments[i].repeatEnd.tm_year + 1900) >= fromyear)) {
-//                if (Appointments[i].description != nullptr) {
-//                    std::cout << "        Skipping " << Appointments[i].description << std::endl;
-//                }
                 continue;
             }
 
@@ -852,10 +857,10 @@ matched = true;
             pack_Appointment(&Appointments[i], Appointment_buf, datebook_v1);
             // could free here? should be fine to delete some things after the appointment is packed
 
-//std::cout << "copying " << Appointments[i].description << std::endl;
-
             // send to the palm, this will return < 0 if there's an error - might want to do check that?
             dlp_WriteRecord(sd, db, 0, 0, 0, Appointment_buf->data, Appointment_buf->used, 0);
+            // last argument is recordid_t *newrecuid, could store that between syncs with list of ical UIDs for better record updating
+            // using PilotUser and SysInfo to identify individual palm pilots?
 
             // free up memory
             pi_buffer_free(Appointment_buf); // might as well free each buffer after it's written
@@ -864,6 +869,9 @@ matched = true;
         }
         std::cout << "done!" << std::endl << std::flush;
     }
+
+
+    /* wrap palm things up */
 
     // close the datebook
     dlp_CloseDB(sd, db);
