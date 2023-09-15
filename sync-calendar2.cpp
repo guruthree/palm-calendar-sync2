@@ -244,11 +244,19 @@ int main(int argc, char **argv) {
             // use event UID to detect duplicates & merge (Google seems to split things out sometimes?)
             icalproperty *uidp = icalcomponent_get_first_property(c, ICAL_UID_PROPERTY);
 
+            bool isarecurrence = icalcomponent_count_properties(c, ICAL_RECURRENCEID_PROPERTY) > 0;
+
             std::string uid("");
             if (uidp != nullptr) {
                 uid = icalproperty_get_uid(uidp);
-                std::cout << "    UID: " << uid << std::endl;
+                if (!isarecurrence) {
+                    std::cout << "    UID: " << uid << std::endl;
+                }
+                else {
+                    std::cout << "    Recurrence of UID: " << uid << std::endl;
+                }
             }
+
 
             int uidmatched = -1;
             for (int i = 0; i < uids.size(); i++) {
@@ -263,8 +271,9 @@ int main(int argc, char **argv) {
             // see pi-datebook.h for details of format
             Appointment appointment;
 
-            if (uidmatched != -1) {
+            if (uidmatched != -1 && !isarecurrence) {
                 // if this uid exists twice, assume the later one in the file is newer and overwrite any properties specified
+                // it can only be allowed to match a previous UID if there's not a RECURRENCE-ID
                 appointment = Appointments[uidmatched];
             }
 
@@ -305,7 +314,7 @@ int main(int argc, char **argv) {
                 strcpy(summary_c2, summary.c_str());
                 appointment.description        = summary_c2;
             }
-            else if (uidmatched == -1) { // only apply default if it's not part of merging another appointment
+            else if (uidmatched == -1 || isarecurrence) { // only apply default if it's not part of merging another appointment
                 appointment.description        = nullptr;
             }
 
@@ -322,12 +331,16 @@ int main(int argc, char **argv) {
                 description = description_c;
             }
 
+
             // merge location and description into the note
             // (palmos5 has a location but pilot-link doesn't support it - different database format?)
             std::string note;
             if (location.length() > 0) {
                 note = note + "Location: " + location;
             }
+
+            // TODO: add attendees to note
+
             if (description.length() > 0) {
                 if (note.length() > 0) {
                     note = note + "\n\n";
@@ -342,7 +355,7 @@ int main(int argc, char **argv) {
                 strcpy(note_c2, note.c_str());
                 appointment.note               = note_c2;
             }
-            else if (uidmatched == -1) {
+            else if (uidmatched == -1 || isarecurrence) { // only apply when not merging
                 appointment.note               = nullptr;
             }
 
@@ -387,7 +400,7 @@ int main(int argc, char **argv) {
                 }
 
             } // numalarms
-            else if (uidmatched == -1) {
+            else if (uidmatched == -1 || isarecurrence) {
                 appointment.alarm              = 0;
                 // we can't store the alarm if it's not enabled so just dummy values here
                 appointment.advance            = 0;
@@ -399,12 +412,14 @@ int main(int argc, char **argv) {
 
             // RRULE repeating sets
             // EXDATE dates in the set skipped, stored as a tm struct with year/month/day only
-            // RDATE one off of repeating events that were moved, they appear as a normal event so ignore
+            // RDATE one off of repeating events that were moved, they appear as a normal event so ignore?
+            // RECURRENCE-ID similar except they have the same UID so shouldn't be merged
 
             // https://libical.github.io/libical/apidocs/icalrecur_8h.html
             // https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
             // https://freetools.textmagic.com/rrule-generator
 
+            // ical to pilot-link mapping
             // X INTERVAL => repeatFrequency
             // X UNTIL => repeatEnd, repeatForever
             // X COUNT => repeatEnd
@@ -414,16 +429,13 @@ int main(int argc, char **argv) {
             // X FREQ => repeatType, repeatDay (montly), repeatDays (weekly)
             // X EXDATE => exception, exceptions
 
-            // TODO: final repetition checks, need to test COUNT, EXDATE, RDATE thoroughly
-// for each daily, weekly, monthly, yearly
-// repeat forever, repeat until, repeat count
-// exclude or move three
-
-// TODO: don't UID match on RDATE 
-
+            // for final repetition checks, need to test COUNT, EXDATE, RECURRENCE-ID thoroughly
+            //     for each daily, weekly, monthly, yearly
+            //     repeat forever, repeat until, repeat count
+            //     exclude or move three
 
             // declare some saine defaults to start with
-            if (uidmatched == -1) { // will already have been set if it's uidmatched
+            if (uidmatched == -1 || isarecurrence) { // will already have been set if it's uidmatched
                 appointment.repeatType         = repeatNone;
                 appointment.repeatForever      = 0;
                 appointment.repeatEnd.tm_year  = 0;
@@ -433,7 +445,7 @@ int main(int argc, char **argv) {
                 appointment.repeatFrequency    = 0;
                 appointment.repeatWeekstart    = 1; // 0-6 Sunday to Saturday, ical default is Monday so 1
                 for (int i = 0; i < 7; i++) appointment.repeatDays[i] = 0;
-    //            appointment.repeatDay          = 0;
+//                appointment.repeatDay          = 0;
                 appointment.exceptions         = 0;
                 appointment.exception          = nullptr; // this is an array, yikes
             }
@@ -509,31 +521,27 @@ int main(int argc, char **argv) {
                         std::cout << "        Repeating day " << day << std::endl;
                     }
 
+                    // convert repeat count to repeat end date
                     if (!appointment.repeatForever && recur.count != 0) {
                         // the logic here is tricky! in effect we need to step forwards from the start date
                         // counting days it happens ignoring says not selected to work out end date
 
-                        int wday = appointment.repeatEnd.tm_wday; // starting day of the appointment
-std::cout << wday << std::endl << std::endl;
-int atday = 0;
-for (int i = wday, repeats = 0; repeats < recur.count; i++, wday++) {
+                        // break out when repeats exceeds the recurrence count
+                        int atday = 0; // count how many days that takes
+                        for (int i = appointment.repeatEnd.tm_wday, repeats = 0; repeats < recur.count; i++, atday++) {
 
-std::cout << "day " << i << std::endl;
-    if (appointment.repeatDays[i]) {
-        repeats++;
-        std::cout << "  a repeating day " << std::endl;
-    }
-    else {
-        std::cout << "  skipping day " << std::endl;
-    }
-    
-    if (i == 7) {
-        i = 0;
-    }
-}
-std::cout << wday << std::endl << std::endl;
+                            // only count days when the event occurs towards repeats
+                            if (appointment.repeatDays[i]) {
+                                repeats++;
+                            }
+                            
+                            // for looping through days of the week
+                            if (i == 7) {
+                                i = 0;
+                            }
+                        }
 
-                        appointment.repeatEnd.tm_mday += wday;
+                        appointment.repeatEnd.tm_mday += atday;
                         appointment.repeatEnd.tm_mday--;
                         timegm(&appointment.repeatEnd);
                     }
@@ -616,16 +624,43 @@ std::cout << wday << std::endl << std::endl;
                 } // for exdatep
             } // rrule
 
+            // if the event is a recurrence attached to another event, that other event needs an exclusion
+            // argh, array resizing
+            if (isarecurrence) {
+                Appointments[uidmatched].exceptions++;
+
+                // new array at new size
+                tm *newexception = (tm*)malloc(Appointments[uidmatched].exceptions * sizeof(tm));
+
+                // copy over existing exceptions into new array
+                for (int i = 0; i < Appointments[uidmatched].exceptions-1; i++) {
+                    newexception[i] = Appointments[uidmatched].exception[i];
+                }
+                newexception[Appointments[uidmatched].exceptions-1] = appointment.begin;
+
+                // cuckoo time
+                free(Appointments[uidmatched].exception); // clear out old egg
+                Appointments[uidmatched].exception = newexception; // put new egg in nest
+            }
+
 
             /* phew, done with this event */
 
             // store the Appointment, either overwriting itself in the list of appointments or adding a new one
-            if (uidmatched != -1) {
+            if (uidmatched != -1 && !isarecurrence) {
                 Appointments[uidmatched] = appointment;
+                std::cout << "    Merging" << std::endl;
             }
             else {
                 Appointments.push_back(appointment);
-                uids.push_back(uid);
+                if (!isarecurrence) {
+                    uids.push_back(uid);
+                }
+                else {
+                    // don't store the uid of a recurrence so that all exclusions get added to the correct one
+                    uids.push_back("");
+                    std::cout << "    Not storing UID" << std::endl;
+                }
                 docopy.push_back(true);
             }
             std::cout << "    Stored for sync" << std::endl << std::endl;
