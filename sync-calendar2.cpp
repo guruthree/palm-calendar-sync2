@@ -36,6 +36,7 @@ int main(int argc, char **argv) {
     // use to keep track if something happened or not (often for exiting on an error)
     bool failed = true;
 
+
     /** read in command line arguments **/
 
     std::cout << "    ==> Reading arguments <==" << std::endl << std::flush;
@@ -275,13 +276,13 @@ int main(int argc, char **argv) {
             time_t start_time_t = icaltime_as_timet_with_zone(start, icaltime_get_timezone(start));
             appointment.begin = *gmtime(&start_time_t); // dereference to avoid subsequent calls overwriting
             timegm(&appointment.begin); // convert localtime to UTC
-            std::cout << "    Start: " << asctime(&appointment.begin);
+            std::cout << "    Start UTC: " << asctime(&appointment.begin);
 
             icaltimetype end = icalcomponent_get_dtend(c);
             time_t end_time_t = icaltime_as_timet_with_zone(end, icaltime_get_timezone(end));
             appointment.end = *gmtime(&end_time_t);
             timegm(&appointment.end);
-            std::cout << "    End: " << asctime(&appointment.end);
+            std::cout << "    End UTC: " << asctime(&appointment.end);
 
             // if it's just a date in ical the appointment is an all day event
             if (icaltime_is_date(start) && icaltime_is_date(end))
@@ -418,6 +419,8 @@ int main(int argc, char **argv) {
 // repeat forever, repeat until, repeat count
 // exclude or move three
 
+// TODO: don't UID match on RDATE 
+
 
             // declare some saine defaults to start with
             if (uidmatched == -1) { // will already have been set if it's uidmatched
@@ -507,7 +510,31 @@ int main(int argc, char **argv) {
                     }
 
                     if (!appointment.repeatForever && recur.count != 0) {
-                        appointment.repeatEnd.tm_mday += recur.count*7 - 1;
+                        // the logic here is tricky! in effect we need to step forwards from the start date
+                        // counting days it happens ignoring says not selected to work out end date
+
+                        int wday = appointment.repeatEnd.tm_wday; // starting day of the appointment
+std::cout << wday << std::endl << std::endl;
+int atday = 0;
+for (int i = wday, repeats = 0; repeats < recur.count; i++, wday++) {
+
+std::cout << "day " << i << std::endl;
+    if (appointment.repeatDays[i]) {
+        repeats++;
+        std::cout << "  a repeating day " << std::endl;
+    }
+    else {
+        std::cout << "  skipping day " << std::endl;
+    }
+    
+    if (i == 7) {
+        i = 0;
+    }
+}
+std::cout << wday << std::endl << std::endl;
+
+                        appointment.repeatEnd.tm_mday += wday;
+                        appointment.repeatEnd.tm_mday--;
                         timegm(&appointment.repeatEnd);
                     }
                 }
@@ -609,73 +636,57 @@ int main(int argc, char **argv) {
     } // if components
 
 
+    /* adjust time zone to specified timezone */
 
+    if (timezone != "UTC") {
 
-    // TODO: timezone conversion to localtime
-    // per https://rl.se/convert-utc-to-local-time convert to time_t then back to gm
+        std::cout << "    ==> Timezone Conversion <==" << std::endl << std::flush;
 
-char *tz = getenv("TZ");
-timezone = "TZ=" + timezone;
-putenv((char*)timezone.c_str());
+        // mktime apparently reads off the TZ environment variable
+        char *tz = getenv("TZ");
+        timezone = "TZ=" + timezone;
+        putenv((char*)timezone.c_str());
 
+        for (int i = 0; i < Appointments.size(); i++) {
 
+            // no timezone adjustment needed for all day events
+            if (Appointments[i].event) {
+                continue;
+            }
 
+            // per https://rl.se/convert-utc-to-local-time convert to time_t then back to gm
+            time_t stamp;  
 
-for (int i = 0; i < Appointments.size(); i++) {
+            stamp = mktime(&Appointments[i].begin);
+            Appointments[i].begin = *localtime(&stamp);
 
-    // no timezone adjustment needed for all day events
-    if (Appointments[i].event) {
-        continue;
-    }
+            stamp = mktime(&Appointments[i].end);
+            Appointments[i].end = *localtime(&stamp);
 
-    time_t      stamp;  
+            // repeat end? don't need to as it always is 23:59:59 on the day
+            // loop exceptions? don't need to because also only a day
+        }
 
-    std::cout << asctime(&Appointments[i].begin);
+        //put env back the way it was?
+        if (tz != nullptr) {
+            timezone = "TZ=" + std::string(tz);
+            putenv((char*)timezone.c_str());
+        }
+        else {
+            putenv((char*)"TZ=");
+        }
 
-    stamp = mktime(&Appointments[i].begin);
-    Appointments[i].begin = *localtime(&stamp);
-
-    std::cout << asctime(&Appointments[i].begin);
-
-
-    std::cout << asctime(&Appointments[i].end);
-
-    stamp = mktime(&Appointments[i].end);
-    Appointments[i].end = *localtime(&stamp);
-
-    std::cout << asctime(&Appointments[i].end);
-
-
-
-    std::cout << std::endl;
-
-// repeat end? don't need to as it always is 23:59:59 on the day
-// loop exceptions? don't need to because also only a day
-
-
-
-}
-
-
-//put env back the way it was?
-if (tz != nullptr) {
-    timezone = "TZ=" + std::string(tz);
-    putenv((char*)timezone.c_str());
-}
-else {
-    putenv((char*)"TZ=");
-}
-
-
-
-    if (!dohotsync) {
-        return EXIT_SUCCESS;
+        std::cout << "    Converted to " << timezone.substr(3) << std::endl;
     }
 
 
     /** palm pilot communication **/
 
-    std::cout << "    ==> Downloading to Palm <==" << std::endl << std::flush;
+    if (!dohotsync) {
+        return EXIT_SUCCESS;
+    }
+
+    std::cout << std::endl << "    ==> Downloading to Palm <==" << std::endl << std::flush;
 
     // a lot of this comes from pilot-link userland.c, pilot-install-datebook.c, or pilot-read-ical.c
 
