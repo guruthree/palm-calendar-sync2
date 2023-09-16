@@ -14,10 +14,10 @@ target_link_libraries(sync-calendar2 config++ curl ical pisock usb usb-1.0)
 
 # copy the datebook cfg to build to make running for debugging easy
 set(datebookcfgfile "datebook.cfg")
-add_custom_target(${datebookcfgfile} ALL
+add_custom_target(${datebookcfgfile} 
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/${datebookcfgfile}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
         ${CMAKE_CURRENT_SOURCE_DIR}/${datebookcfgfile}
         ${CMAKE_CURRENT_BINARY_DIR}/${datebookcfgfile}
 )
-
+add_dependencies(sync-calendar2 ${datebookcfgfile})
