@@ -341,6 +341,56 @@ int main(int argc, char **argv) {
 
             // TODO: add attendees to note
 
+
+
+
+
+int numattendees = icalcomponent_count_properties(c, ICAL_ATTENDEE_PROPERTY);
+if (numattendees > 0) {
+    
+    // similar to numalarms below
+    std::cout << "    " << numattendees << " attendees" << std::endl;
+
+    if (note.length() > 0) {
+        note = note + "\n";
+    }
+    note = note + "Attendees:\n";
+
+    for(icalproperty *attendeep = icalcomponent_get_first_property(c, ICAL_ATTENDEE_PROPERTY); attendeep != 0;
+            attendeep = icalcomponent_get_next_property(c, ICAL_ATTENDEE_PROPERTY)) {
+
+        std::string attendee = icalproperty_get_attendee(attendeep);
+
+        icalparameter *cnp2 = icalproperty_get_first_parameter(attendeep, ICAL_CN_PARAMETER);
+        std::string attendee_cn("");
+        if (cnp2 != nullptr) {
+            attendee_cn = icalparameter_get_iana_value(cnp2);
+        }
+
+        if (attendee_cn != "") {
+            std::cout << "CN: " << attendee_cn << std::endl;
+            note = note + attendee_cn + "\n";
+        }
+        else {
+            // if there's no CN (common name) fall back to the base value which is usually an e-mail address
+            int k = attendee.find("mailto:");
+            if (k != std::string::npos) {
+                // strip off the mailto
+                attendee = attendee.substr(7);
+            }
+            std::cout << attendee << std::endl;
+        }
+
+    }
+
+} // numattendees
+
+
+
+
+
+
+
             if (description.length() > 0) {
                 if (note.length() > 0) {
                     note = note + "\n";
@@ -401,6 +451,7 @@ int main(int argc, char **argv) {
 
             } // numalarms
             else if (uidmatched == -1 || isarecurrence) {
+                // more initialisation
                 appointment.alarm              = 0;
                 // we can't store the alarm if it's not enabled so just dummy values here
                 appointment.advance            = 0;
