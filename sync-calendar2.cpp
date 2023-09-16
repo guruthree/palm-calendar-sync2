@@ -591,6 +591,19 @@ int main(int argc, char **argv) {
                         std::cout << "        Repeating day " << day << std::endl;
                     }
 
+                    // check to make sure some repeat days are selected, if not, repeat on all days
+                    int numrepeatdays = 0;
+                    for (int i = 0; i < 7; i++) {
+                        numrepeatdays += appointment.repeatDays[i];
+                    }
+                    if (numrepeatdays == 0) {
+                        std::cout << "        Repeating all days (assumed)" << std::endl;
+                        for (int i = 0; i < 7; i++) {
+                            appointment.repeatDays[i] = 1;
+                        }
+//                        recur.count = recur.count * 7; // recur.count is otherwise days?
+                    }
+
                     // convert repeat count to repeat end date
                     if (!appointment.repeatForever && recur.count != 0) {
                         // the logic here is tricky! in effect we need to step forwards from the start date
