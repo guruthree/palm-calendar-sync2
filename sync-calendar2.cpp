@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
 
             if (description.length() > 0) {
                 if (note.length() > 0) {
-                    note = note + "\n\n";
+                    note = note + "\n";
                 }
                 note = note + description;
             }
@@ -418,6 +418,8 @@ int main(int argc, char **argv) {
             // https://libical.github.io/libical/apidocs/icalrecur_8h.html
             // https://libical.github.io/libical/apidocs/structicalrecurrencetype.html
             // https://freetools.textmagic.com/rrule-generator
+            // https://icalendar.org/validator.html
+            // https://icalendar.org/iCalendar-RFC-5545/3-3-10-recurrence-rule.html
 
             // ical to pilot-link mapping
             // X INTERVAL => repeatFrequency
@@ -433,6 +435,7 @@ int main(int argc, char **argv) {
             //     for each daily, weekly, monthly, yearly
             //     repeat forever, repeat until, repeat count
             //     exclude or move three
+            // can also check against recur.txt from libical test-data
 
             // declare some saine defaults to start with
             if (uidmatched == -1 || isarecurrence) { // will already have been set if it's uidmatched
@@ -489,6 +492,11 @@ int main(int argc, char **argv) {
                 // palm looks a bit different than libical here with the 1 being monday as opposed to 2 (ICAL_MONDAY_WEEKDAY)
                 appointment.repeatWeekstart = weekday2int(recur.week_start);
 
+                // palm doesn't support anything less than daily
+                UNSUPPORTED_ICAL(by_second, BYSECOND)
+                UNSUPPORTED_ICAL(by_minute, BYMINUTE)
+                UNSUPPORTED_ICAL(by_hour, BYHOUR)
+
                 icalrecurrencetype_frequency freq = recur.freq;
                 if (freq == ICAL_NO_RECURRENCE || 
                         freq == ICAL_SECONDLY_RECURRENCE || 
@@ -497,12 +505,15 @@ int main(int argc, char **argv) {
 
                     // palm doesn't support anything less than daily, so no repeating
                     appointment.repeatType = repeatNone;
-                    std::cout << "    Unsupported frequency, repeating disabled!" << std::endl;
+                    failed = true;
+                    std::cout << "        WARNING unsupported frequency, won't copy!" << std::endl;
                 }
                 else if (freq == ICAL_DAILY_RECURRENCE) {
 
                     std::cout << "    Repeating daily" << std::endl;
                     appointment.repeatType = repeatDaily;
+
+                    UNSUPPORTED_ICAL(by_month, BYMONTH)
 
                     if (!appointment.repeatForever && recur.count != 0) {
                         appointment.repeatEnd.tm_mday += recur.count - 1;
@@ -530,14 +541,18 @@ int main(int argc, char **argv) {
                         int atday = 0; // count how many days that takes
                         for (int i = appointment.repeatEnd.tm_wday, repeats = 0; repeats < recur.count; i++, atday++) {
 
+//                            std::cout << "day " << i << std::endl;
+
                             // only count days when the event occurs towards repeats
                             if (appointment.repeatDays[i]) {
                                 repeats++;
+//                                std::cout << "  a repeating day " << std::endl;
                             }
                             
                             // for looping through days of the week
-                            if (i == 7) {
-                                i = 0;
+                            if (i == 6) {
+                                i = -1; // at the end of the loop ++ brings it back to 0?
+//                                std::cout << "looping back " << std::endl;
                             }
                         }
 
@@ -557,6 +572,8 @@ int main(int argc, char **argv) {
                         // day of the month in by day repeat - this is done in pilot-datebook, but doesn't seem needed based on pi-datebook.h
                         appointment.repeatDay = (DayOfMonthType)recur.by_month_day[0]; 
                         std::cout << "        Repeating on " << appointment.begin.tm_mday << std::endl;
+
+                        UNSUPPORTED_ICAL1(by_month_day, BYMONTHDAY)
                     }
                     else { // BYDAY   
            
@@ -565,8 +582,9 @@ int main(int argc, char **argv) {
                             int week = icalrecurrencetype_day_position(recur.by_day[0]);
                             if (week <= 0) {
                                 // all days of the month (0) or counting backwards from end of month
+                                // can't use macro here because some BYDAY are supported
                                 failed = true;
-                                std::cout << "        WARNING unsupported BYDAY, won't copy" << std::endl;
+                                std::cout << "        WARNING unsupported BYDAY, won't copy!" << std::endl;
                             }
                             else {
                                 int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
@@ -595,18 +613,10 @@ int main(int argc, char **argv) {
                     std::cout << "    Repeating yearly" << std::endl;
                     appointment.repeatType = repeatYearly;
 
-                    if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
-                        // palm doesn't support yearly on a day
-                        failed = true;
-                        std::cout << "        WARNING unsupported BYDAY, won't copy" << std::endl;
-                    }
-                    if (recur.by_month[0] != ICAL_RECURRENCE_ARRAY_MAX) {
-                        // palm doesn't support BYMONTH
-                        failed = true;
-                        std::cout << "        WARNING unsupported BYMONTH, won't copy" << std::endl;
-                    }
-                    
-                    
+                    UNSUPPORTED_ICAL(by_day, BYDAY)
+                    UNSUPPORTED_ICAL(by_month, BYMONTH)
+                    UNSUPPORTED_ICAL(by_year_day, BYYEARDAY)  
+                    UNSUPPORTED_ICAL(by_week_no, BYWEEKNO)                    
 
                     if (!appointment.repeatForever && recur.count != 0) {
                         appointment.repeatEnd.tm_year += recur.count;
@@ -646,7 +656,7 @@ int main(int argc, char **argv) {
 
             // if the event is a recurrence attached to another event, that other event needs an exclusion
             // argh, array resizing
-            if (isarecurrence) {
+            if (isarecurrence && uidmatched != -1) { // don't want orphan events to cause problems
                 Appointments[uidmatched].exceptions++;
 
                 // new array at new size
@@ -681,10 +691,25 @@ int main(int argc, char **argv) {
                     uids.push_back("");
                     std::cout << "    Not storing UID" << std::endl;
                 }
+
+
+                // skip if it's older than FROMYEAR and repeating until now
+                if ((appointment.begin.tm_year + 1900) < fromyear && 
+                        !appointment.repeatForever && 
+                        !((appointment.repeatEnd.tm_year + 1900) >= fromyear)) {
+                    failed = true; // gets put in docopy
+                    std::cout << "    Earlier than " << fromyear << ", ignoring" << std::endl;
+                }
+
 //                docopy.push_back(true);
                 docopy.push_back(!failed);
+                if (docopy.back()) { // should get last element
+                    std::cout << "    Stored for sync" << std::endl << std::endl;
+                }
+                else {
+                    std::cout << "    WARNING won't sync" << std::endl << std::endl;
+                }
             }
-            std::cout << "    Stored for sync" << std::endl << std::endl;
 
         } // for c
 //        if (c != nullptr) icalcomponent_free(c);
@@ -908,14 +933,6 @@ int main(int argc, char **argv) {
 
             // skip records not marked for transfer
             if (docopy[i] == false) {
-                continue;
-            }
-
-            // skip if it's older than FROMYEAR and repeating until now
-            // move this logic earlier and store in an array of toskip?
-            if ((Appointments[i].begin.tm_year + 1900) < fromyear && 
-                    !Appointments[i].repeatForever && 
-                    !((Appointments[i].repeatEnd.tm_year + 1900) >= fromyear)) {
                 continue;
             }
 

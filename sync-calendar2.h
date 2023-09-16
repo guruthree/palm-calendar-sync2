@@ -114,3 +114,9 @@ const char* DayOfMonthString[35] = {
 	"domLastFri",
 	"domLastSat"
 };
+
+// there are a few times when BYDAY and BYMONTH aren't supported in the palm calendar
+// provide a warning and mark to not copy
+#define UNSUPPORTED_ICAL(VAR, LABEL) if (recur.VAR[0] != ICAL_RECURRENCE_ARRAY_MAX) { failed = true; std::cout << "        WARNING unsupported "#LABEL", won't copy!" << std::endl; }
+// sometimes more than one value is suggested by the ical when palm only supports one
+#define UNSUPPORTED_ICAL1(VAR, LABEL) if (recur.VAR[1] != ICAL_RECURRENCE_ARRAY_MAX) { failed = true; std::cout << "        WARNING unsupported "#LABEL", won't copy!" << std::endl; }
