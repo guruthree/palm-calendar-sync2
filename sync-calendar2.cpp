@@ -1,4 +1,22 @@
-// TODO: copyright, GPLv2
+/*
+ *
+ * Copyright (C) 2023 guruthree
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ *
+ */
 
 // sync-calendar attempt to read ical file and write to palm pilot
 // if we're really good also try to not repeat any event that already exists
@@ -336,70 +354,60 @@ int main(int argc, char **argv) {
             // (palmos5 has a location but pilot-link doesn't support it - different database format?)
             std::string note;
             if (location.length() > 0) {
-                note = note + "Location: " + location;
+                note = note + "Location:\n" + location;
             }
 
-            // TODO: add attendees to note
+            // add attendees list to the note
+            int numattendees = icalcomponent_count_properties(c, ICAL_ATTENDEE_PROPERTY);
+            if (numattendees > 0) {
+                
+                std::cout << "    " << numattendees << " attendees" << std::endl;
 
+                if (note.length() > 0) {
+                    note = note + "\n\n";
+                }
+                note = note + "Attendees:";
 
+                for(icalproperty *attendeep = icalcomponent_get_first_property(c, ICAL_ATTENDEE_PROPERTY); attendeep != 0;
+                        attendeep = icalcomponent_get_next_property(c, ICAL_ATTENDEE_PROPERTY)) {
 
+                    std::string attendee = icalproperty_get_attendee(attendeep);
 
+                    icalparameter *cnp2 = icalproperty_get_first_parameter(attendeep, ICAL_CN_PARAMETER);
+                    std::string attendee_cn("");
+                    if (cnp2 != nullptr) {
+                        attendee_cn = icalparameter_get_iana_value(cnp2);
+                    }
 
-int numattendees = icalcomponent_count_properties(c, ICAL_ATTENDEE_PROPERTY);
-if (numattendees > 0) {
-    
-    // similar to numalarms below
-    std::cout << "    " << numattendees << " attendees" << std::endl;
+                    if (attendee_cn != "") {
+                        std::cout << "CN: " << attendee_cn << std::endl;
+                        note = note + "\n" + attendee_cn;
+                    }
+                    else {
+                        // if there's no CN (common name) fall back to the base value which is usually an e-mail address
+                        int k = attendee.find("mailto:");
+                        if (k != std::string::npos) {
+                            // strip off the mailto
+                            attendee = attendee.substr(7);
+                        }
+                        note = note + "\n" + attendee_cn;
+                    }
 
-    if (note.length() > 0) {
-        note = note + "\n";
-    }
-    note = note + "Attendees:\n";
+                }
 
-    for(icalproperty *attendeep = icalcomponent_get_first_property(c, ICAL_ATTENDEE_PROPERTY); attendeep != 0;
-            attendeep = icalcomponent_get_next_property(c, ICAL_ATTENDEE_PROPERTY)) {
+            } // numattendees
 
-        std::string attendee = icalproperty_get_attendee(attendeep);
-
-        icalparameter *cnp2 = icalproperty_get_first_parameter(attendeep, ICAL_CN_PARAMETER);
-        std::string attendee_cn("");
-        if (cnp2 != nullptr) {
-            attendee_cn = icalparameter_get_iana_value(cnp2);
-        }
-
-        if (attendee_cn != "") {
-            std::cout << "CN: " << attendee_cn << std::endl;
-            note = note + attendee_cn + "\n";
-        }
-        else {
-            // if there's no CN (common name) fall back to the base value which is usually an e-mail address
-            int k = attendee.find("mailto:");
-            if (k != std::string::npos) {
-                // strip off the mailto
-                attendee = attendee.substr(7);
-            }
-            std::cout << attendee << std::endl;
-        }
-
-    }
-
-} // numattendees
-
-
-
-
-
-
-
+            // add the description to the note if present
             if (description.length() > 0) {
                 if (note.length() > 0) {
-                    note = note + "\n";
+                    note = note + "\n\n";
                 }
                 note = note + description;
             }
+
             if (note.length() > 0) { // note might be empty
 
-                std::cout << "    Note:\n        " << note << std::endl;
+                std::cout << "    Note:\n" << note << std::endl;
 
                 char *note_c2 = new char[note.length()+1];
                 strcpy(note_c2, note.c_str());
@@ -650,7 +658,7 @@ if (numattendees > 0) {
                             }
                         }
                         else {
-                            std::cout << "        Unexpected repeat???" << std::endl;
+                            std::cout << "        WARNING unexpected repeat???" << std::endl;
                         }
                     }
 
@@ -705,12 +713,15 @@ if (numattendees > 0) {
                 } // for exdatep
             } // rrule
 
-            // if the event is a recurrence attached to another event, that other event needs an exclusion
-            // argh, array resizing
-            if (isarecurrence && uidmatched != -1) { // don't want orphan events to cause problems
-                Appointments[uidmatched].exceptions++;
+            if (isarecurrence && uidmatched != -1) { 
+                // some things to do if an event is a recurrence
 
-                // new array at new size
+                // recurrence events are moved events from a repeating set, but ical doesn't add an exdate for them
+                // we don't want the moved event to appear so exclude it from the parent event based on UID
+                // i.e., if the event is a recurrence attached to another event, that other event needs an exclusion
+
+                // new array at new size - argh, array resizing
+                Appointments[uidmatched].exceptions++;
                 tm *newexception = (tm*)malloc(Appointments[uidmatched].exceptions * sizeof(tm));
 
                 // copy over existing exceptions into new array
@@ -722,6 +733,8 @@ if (numattendees > 0) {
                 // cuckoo time
                 free(Appointments[uidmatched].exception); // clear out old egg
                 Appointments[uidmatched].exception = newexception; // put new egg in nest
+
+                // we could copy parent note/summary if there is one and the appointment doesn't have its own?
             }
 
 
