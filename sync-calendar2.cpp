@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
             // palm won't take an event with a description
 
             std::cout << "    ==> Processing event <==" << std::endl;
-
+            failed = false;
 
             /* create Appointment if it doesn't already exist */
 
@@ -563,15 +563,22 @@ int main(int argc, char **argv) {
                         // should only ever be the first day as monthly things can't occur more than once a month
                         if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
                             int week = icalrecurrencetype_day_position(recur.by_day[0]);
-                            int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
+                            if (week <= 0) {
+                                // all days of the month (0) or counting backwards from end of month
+                                failed = true;
+                                std::cout << "        WARNING unsupported BYDAY, won't copy" << std::endl;
+                            }
+                            else {
+                                int day = weekday2int(icalrecurrencetype_day_day_of_week(recur.by_day[0]));
 
-                            // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
-                            appointment.repeatDay = (DayOfMonthType)((week - 1)*7 + day);
+                                // not ideal, but I don't expect the DayOfMonthType enum to change anytime soon
+                                appointment.repeatDay = (DayOfMonthType)((week - 1)*7 + day);
 
-                            std::cout << "        Repeating the " << day << " of week " << week <<
-                                " (enum " << appointment.repeatDay << " " << DayOfMonthString[appointment.repeatDay] << ")" << std::endl;
+                                std::cout << "        Repeating the " << day << " of week " << week <<
+                                    " (enum " << appointment.repeatDay << " " << DayOfMonthString[appointment.repeatDay] << ")" << std::endl;
 
-                            appointment.repeatType = repeatMonthlyByDay; 
+                                appointment.repeatType = repeatMonthlyByDay;
+                            }
                         }
                         else {
                             std::cout << "        Unexpected repeat???" << std::endl;
@@ -587,6 +594,19 @@ int main(int argc, char **argv) {
                 else if (freq == ICAL_YEARLY_RECURRENCE) {
                     std::cout << "    Repeating yearly" << std::endl;
                     appointment.repeatType = repeatYearly;
+
+                    if (recur.by_day[0] != ICAL_RECURRENCE_ARRAY_MAX) {
+                        // palm doesn't support yearly on a day
+                        failed = true;
+                        std::cout << "        WARNING unsupported BYDAY, won't copy" << std::endl;
+                    }
+                    if (recur.by_month[0] != ICAL_RECURRENCE_ARRAY_MAX) {
+                        // palm doesn't support BYMONTH
+                        failed = true;
+                        std::cout << "        WARNING unsupported BYMONTH, won't copy" << std::endl;
+                    }
+                    
+                    
 
                     if (!appointment.repeatForever && recur.count != 0) {
                         appointment.repeatEnd.tm_year += recur.count;
@@ -661,7 +681,8 @@ int main(int argc, char **argv) {
                     uids.push_back("");
                     std::cout << "    Not storing UID" << std::endl;
                 }
-                docopy.push_back(true);
+//                docopy.push_back(true);
+                docopy.push_back(!failed);
             }
             std::cout << "    Stored for sync" << std::endl << std::endl;
 
