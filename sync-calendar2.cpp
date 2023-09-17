@@ -320,11 +320,29 @@ int main(int argc, char **argv) {
 
             // there is some tedious conversion from char to const char to string and around things
             // (probably a side effect of mixing C and C++)
+
+            // get the summary
             std::string summary("");
             const char* summary_c = icalcomponent_get_summary(c);
             if (summary_c != nullptr) {
-
                 summary = summary_c;
+            }
+
+            // get the description / note
+            std::string description("");
+            const char* description_c = icalcomponent_get_description(c);
+            if (description_c != nullptr) {
+                description = description_c;
+            }
+
+            // if there's no summary and a 1 line description, use the description as a summary instead
+            // (mostly for the ical recur checks really)
+            if (summary.length() == 0 && description.length() > 0 && description.find("\n") == std::string::npos) {
+                summary = description;
+                description = "";
+            }
+
+            if (summary.length() > 0) {
                 std::cout << "    Summary: " << summary << std::endl;
 
                 // an annoying round about route from const char* to std::string to char*
@@ -337,22 +355,14 @@ int main(int argc, char **argv) {
                 appointment.description        = nullptr;
             }
 
-            // get the location and descriptions and merge for an event attached note
+            // get the location (palmos5 has a location but pilot-link doesn't support it - different database format?)
             std::string location("");
             const char* location_c = icalcomponent_get_location(c);
             if (location_c != nullptr) {
                 location = location_c;
             }
 
-            std::string description("");
-            const char* description_c = icalcomponent_get_description(c);
-            if (description_c != nullptr) {
-                description = description_c;
-            }
-
-
             // merge location and description into the note
-            // (palmos5 has a location but pilot-link doesn't support it - different database format?)
             std::string note;
             if (location.length() > 0) {
                 note = note + "Location:\n" + location;
