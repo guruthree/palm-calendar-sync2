@@ -174,6 +174,7 @@ int main(int argc, char **argv) {
         // tell curl to write to a std::string
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWrite_CallbackFunc_StdString);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &icaldata);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, true);
 
         // perform the request, res will get the return code
         res = curl_easy_perform(curl);
