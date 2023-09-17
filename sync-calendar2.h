@@ -49,18 +49,23 @@ size_t CurlWrite_CallbackFunc_StdString(void *contents, size_t size, size_t nmem
 // there's some bug with pilot-link and libusb now that presents as pilot-link hanging
 // it looks like this might be a race condition with a mutex staying locked
 
-int pi_close_fixed(int sd) {
+int pi_close_fixed(int sd, std::string port) {
     std::cout << "    Closing connection... " << std::flush;
 
     // close the palm's connection
-    dlp_EndOfSync(sd, 0);
+    if (sd >= 0) {
+        dlp_EndOfSync(sd, 0);
+    }
 
     std::cout << "disconnecting... " << std::flush;
 
     // work around for hanging on close due (probably) a race condition closing out libusb
     bool failed = false;
     pi_socket_t *ps = find_pi_socket(sd);
-    if (ps) {
+    if (ps && port.find("usb") == 0) {
+        // don't try and close usb if we're not USB
+        // (we need to pass port for this because there's no way to get the port back from the socket)
+
         pi_usb_data_t *data = (pi_usb_data_t *)ps->device->data;
         usb_dev_handle *dev = (usb_dev_handle*)data->ref;
         libusb_device_handle *dev_handle = dev->handle;
@@ -72,9 +77,9 @@ int pi_close_fixed(int sd) {
             failed = true;
         }
     }
-    else {
-        failed = true;
-    }
+//    else if (ps == nullptr) {
+//        failed = true;
+//    }
     if (failed) {
         std::cout << std::endl << "    WARNING probably hanging on a libusb race condition now..." << std::endl << std::flush;
     }

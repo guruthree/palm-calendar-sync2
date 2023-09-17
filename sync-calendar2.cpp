@@ -863,14 +863,14 @@ int main(int argc, char **argv) {
 
     if (pi_listen(sd, 1) < 0) {
         std::cout << std::endl << "    ERROR listening on " << port << std::endl;
-        pi_close_fixed(sd);
+        pi_close_fixed(sd, port);
         return EXIT_FAILURE;
     }
 
     sd = pi_accept_to(sd, 0, 0, 0); // last argument is a timeout in seconds - 0 is wait forever?
     if (sd < 0) {
         std::cout << "    ERROR accepting data on " << port << std::endl;
-        pi_close_fixed(sd);
+        pi_close_fixed(sd, port);
         return EXIT_FAILURE;
     }
 
@@ -879,7 +879,7 @@ int main(int argc, char **argv) {
     SysInfo sys_info;
     if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
         std::cout << "    ERROR reading system info on " << port << std::endl;
-        pi_close_fixed(sd);
+        pi_close_fixed(sd, port);
         return EXIT_FAILURE;
     }
 
@@ -889,7 +889,7 @@ int main(int argc, char **argv) {
     // tell the palm we're going to be communicating
     if (dlp_OpenConduit(sd) < 0) {
         std::cout << "    ERROR opening conduit with Palm" << std::endl;
-        pi_close_fixed(sd);
+        pi_close_fixed(sd, port);
         return EXIT_FAILURE;
     }
 
@@ -899,7 +899,7 @@ int main(int argc, char **argv) {
         std::cout << "    ERROR unable to open DatebookDB on Palm" << std::endl;
         // (char*) is a little unsafe, but function does not edit the string
         dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n"); // log on palm
-        pi_close_fixed(sd);
+        pi_close_fixed(sd, port);
         return EXIT_FAILURE;
     }
     else {
@@ -917,7 +917,7 @@ int main(int argc, char **argv) {
             std::cout << std::endl << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
             // (char*) is a little unsafe, but function does not edit the string
             dlp_AddSyncLogEntry(sd, (char*)"Unable to delete DatebookDB records.\n"); // log on palm
-            pi_close_fixed(sd);
+            pi_close_fixed(sd, port);
             return EXIT_FAILURE;
         }
         std::cout << " done!" << std::endl << std::flush;
@@ -1049,7 +1049,7 @@ int main(int argc, char **argv) {
     dlp_AddSyncLogEntry(sd, (char*)"Successfully wrote Appointments to Palm.\n"); // log on palm
 
     // close the connection
-    if (pi_close_fixed(sd) < 0) {
+    if (pi_close_fixed(sd, port) < 0) {
         return EXIT_FAILURE;
     }
 
