@@ -147,6 +147,63 @@ int main(int argc, char **argv) {
     std::cout << std::endl << std::flush;
 
 
+    /** palm pilot communication part 1 **/
+
+    int sd = -1; // socket descriptor (like an fid)
+    PilotUser User;
+
+    if (dohotsync) {
+
+        std::cout << "    ==> Connecting to Palm <==" << std::endl << std::flush;
+
+        // a lot of this comes from pilot-link userland.c, pilot-install-datebook.c, or pilot-read-ical.c
+
+        if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
+            std::cout << "    ERROR unable to create socket '" << port << "'" << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        if (pi_bind(sd, port.c_str()) < 0) {
+            std::cout << "    ERROR unable to bind to port: " << port << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        std::cout << "    Listening for incoming connection on " << port << "... " << std::flush;
+
+        if (pi_listen(sd, 1) < 0) {
+            std::cout << std::endl << "    ERROR listening on " << port << std::endl;
+            pi_close_fixed(sd, port);
+            return EXIT_FAILURE;
+        }
+
+        sd = pi_accept_to(sd, 0, 0, 0); // last argument is a timeout in seconds - 0 is wait forever?
+        if (sd < 0) {
+            std::cout << "    ERROR accepting data on " << port << std::endl;
+            pi_close_fixed(sd, port);
+            return EXIT_FAILURE;
+        }
+
+        std::cout << "connected!" << std::endl << std::endl << std::flush;
+
+        SysInfo sys_info;
+        if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
+            std::cout << "    ERROR reading system info on " << port << std::endl;
+            pi_close_fixed(sd, port);
+            return EXIT_FAILURE;
+        }
+
+        dlp_ReadUserInfo(sd, &User);
+
+        // tell the palm we're going to be communicating
+        if (dlp_OpenConduit(sd) < 0) {
+            std::cout << "    ERROR opening conduit with Palm" << std::endl;
+            pi_close_fixed(sd, port);
+            return EXIT_FAILURE;
+        }
+
+    }
+
+
     /** read in calendar data using libcurl **/
 
     std::cout << "    ==> Downloading calendar <==" << std::endl << std::flush;
@@ -854,60 +911,13 @@ int main(int argc, char **argv) {
     }
 
 
-    /** palm pilot communication **/
+    /** palm pilot communication part 2 **/
 
     if (!dohotsync) {
         return EXIT_SUCCESS;
     }
 
-    std::cout << std::endl << "    ==> Downloading to Palm <==" << std::endl << std::flush;
-
-    // a lot of this comes from pilot-link userland.c, pilot-install-datebook.c, or pilot-read-ical.c
-
-    int sd = -1; // socket descriptor (like an fid)
-    if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
-        std::cout << "    ERROR unable to create socket '" << port << "'" << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    if (pi_bind(sd, port.c_str()) < 0) {
-        std::cout << "    ERROR unable to bind to port: " << port << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    std::cout << "    Listening for incoming connection on " << port << "... " << std::flush;
-
-    if (pi_listen(sd, 1) < 0) {
-        std::cout << std::endl << "    ERROR listening on " << port << std::endl;
-        pi_close_fixed(sd, port);
-        return EXIT_FAILURE;
-    }
-
-    sd = pi_accept_to(sd, 0, 0, 0); // last argument is a timeout in seconds - 0 is wait forever?
-    if (sd < 0) {
-        std::cout << "    ERROR accepting data on " << port << std::endl;
-        pi_close_fixed(sd, port);
-        return EXIT_FAILURE;
-    }
-
-    std::cout << "connected!" << std::endl;
-
-    SysInfo sys_info;
-    if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
-        std::cout << "    ERROR reading system info on " << port << std::endl;
-        pi_close_fixed(sd, port);
-        return EXIT_FAILURE;
-    }
-
-    PilotUser User;
-    dlp_ReadUserInfo(sd, &User);
-
-    // tell the palm we're going to be communicating
-    if (dlp_OpenConduit(sd) < 0) {
-        std::cout << "    ERROR opening conduit with Palm" << std::endl;
-        pi_close_fixed(sd, port);
-        return EXIT_FAILURE;
-    }
+    std::cout << "    ==> Downloading to Palm <==" << std::endl << std::flush;
 
     // open the datebook and store a handle to it in db
     int db;
