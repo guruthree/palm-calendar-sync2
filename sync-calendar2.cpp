@@ -181,14 +181,16 @@ int main(int argc, char **argv) {
 
         // check for errors
         if (res != CURLE_OK) {
-            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            std::cerr << "    ERROR curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
             failed = true;
         }
         else {
             long http_code = 0;
-            curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
-            if (http_code != 200) {
-                std::cerr << "    Error fetching URI, http response code " << http_code << std::endl;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+            char *scheme;
+            curl_easy_getinfo(curl, CURLINFO_SCHEME, &scheme);
+            if (http_code != 200 && !(strcmp(scheme, "FILE") == 0)) {
+                std::cerr << "    ERROR fetching URI, http response code " << http_code << std::endl;
                 failed = true;
             }
         }
@@ -197,14 +199,17 @@ int main(int argc, char **argv) {
         curl_easy_cleanup(curl);
     }
     else {
-        std::cerr << "    Error initialising curl" << std::endl;
+        std::cerr << "    ERROR initialising curl" << std::endl;
     }
 
     curl_global_cleanup();
  
     if (failed) {
         // something went wrong along the way, exit
-        std::cerr << "    Exiting after error" << std::endl;
+        std::cerr << "    Exiting after curl error" << std::endl << std::endl;
+        if (dohotsync) {
+            pi_close_fixed(sd, port);
+        }
         return EXIT_FAILURE;
     }
     std::cout << "    Calendar downloaded successfully" << std::endl << std::endl << std::flush;
@@ -255,7 +260,7 @@ int main(int argc, char **argv) {
             // every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
             // palm won't take an event with a description
 
-            std::cout << "    ==> Processing event <==" << std::endl;
+            std::cout << "    ==> Processing events <==" << std::endl;
             failed = false;
 
             /* create Appointment if it doesn't already exist */

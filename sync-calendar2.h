@@ -24,12 +24,12 @@
 
 // fail to exit if this config item can't be read
 #define FAIL_CFG(LABEL, VAR) if (!cfg.lookupValue(#LABEL, VAR)) { \
-    std::cerr << "No "#LABEL" setting in configuration file, failing." << std::endl; \
+    std::cerr << "    No "#LABEL" setting in configuration file, failing." << std::endl; \
     return EXIT_FAILURE; } else { \
     std::cout << "    Config "#LABEL": " << VAR << std::endl; }
 // assume default value of this item can't be read
 #define NON_FAIL_CFG(LABEL, VAR) if (!cfg.lookupValue(#LABEL, VAR)) \
-    { std::cerr << "No "#LABEL" setting, assuming " << VAR << "." << std::endl; } else { \
+    { std::cerr << "    No "#LABEL" setting, assuming " << VAR << "." << std::endl; } else { \
     std::cout << "    Config "#LABEL": " << VAR << std::endl; }
 
 // callback for having curl store output in a std::string
@@ -92,7 +92,7 @@ int pi_close_fixed(int sd, std::string port) {
         return -1;
     }
 
-    std::cout << "done!" << std::endl << std::flush;
+    std::cout << "done!" << std::endl << std::endl << std::flush;
 
     return 0;
 }
