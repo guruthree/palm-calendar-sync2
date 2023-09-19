@@ -5,6 +5,10 @@ If you've got an old [Palm Pilot](https://en.wikipedia.org/wiki/PalmPilot) kicki
 
 `calendary-sync2` is a stand-alone tool to read an [iCaliendar](https://en.wikipedia.org/wiki/ICalendar) (ical/ics)  formatted date-book/calendar and send it to a Palm Pilot using a HotSync. This should allow for an up-to-date at the time of HotSync calendar to be made available on a Palm device.
 
+A YouTube video outlining the project:
+
+[![Getting Google Calendar on a Palm Pilot](resources/youtube-thumb.jpg)](https://www.youtube.com/watch?v=iAAXIlFZGh8)
+
 ## Background
 
 I previously attempted a similar project, [google-calendar-to-palm-pilot](https://github.com/guruthree/google-calendar-to-palm-pilot), but ran into several probably fatal flaws that led to me abandoning it:
@@ -22,7 +26,7 @@ These issues have been addressed by writing the application in C this time and d
 * Fetches calendars over http/https
 * Read and merges calendar with existing calendar, preserving any Palm-only Datebook events
 * Works with USB, serial, and network HotSync
-* Fully compatible (I hope) with the Google-calendar ics export
+* Fully compatible (I hope) with the [Google-calendar ics export](https://support.google.com/calendar/answer/37648?hl=en#zippy=%2Cget-your-calendar-view-only)
 * Alarms (optional)
 * Repeating events, with exclusions and moved events
 * Descriptions, location, and attendees added to a Note
