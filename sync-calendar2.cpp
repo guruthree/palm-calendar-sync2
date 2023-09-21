@@ -217,6 +217,8 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
     if(curl) {
+        std::cout << "    Fetching " << uri << std::endl;
+
         curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
 
         // disable some SSL checks, reduced security
@@ -317,7 +319,7 @@ int main(int argc, char **argv) {
             // every event should have a DTSTART, DTEND, and DTSUMMARY (which is palm description)
             // palm won't take an event with a description
 
-            std::cout << "    ==> Processing events <==" << std::endl;
+            std::cout << "    ==> Processing event <==" << std::endl;
             failed = false;
 
             /* create Appointment if it doesn't already exist */
