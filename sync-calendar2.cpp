@@ -121,11 +121,11 @@ int main(int argc, char **argv) {
         cfg.readFile(configfile);
     }
     catch (const libconfig::FileIOException &fioex) {
-        std::cerr << "    I/O error while reading" << std::endl;
+        std::cerr << "    ERROR while reading" << std::endl;
         return EXIT_FAILURE;
     }
     catch (const libconfig::ParseException &pex) {
-        std::cerr << "    Parse error at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
+        std::cerr << "    ERROR parsing at " << pex.getFile() << ":" << pex.getLine() << " - " << pex.getError() << std::endl;
     }
 
     // use macros to tidy up reading config options
@@ -159,26 +159,26 @@ int main(int argc, char **argv) {
         // a lot of this comes from pilot-link userland.c, pilot-install-datebook.c, or pilot-read-ical.c
 
         if ((sd = pi_socket(PI_AF_PILOT, PI_SOCK_STREAM, PI_PF_DLP)) < 0) {
-            std::cout << "    ERROR unable to create socket '" << port << "'" << std::endl;
+            std::cerr << "    ERROR unable to create socket '" << port << "'" << std::endl;
             return EXIT_FAILURE;
         }
 
         if (pi_bind(sd, port.c_str()) < 0) {
-            std::cout << "    ERROR unable to bind to port: " << port << std::endl;
+            std::cerr << "    ERROR unable to bind to port: " << port << std::endl;
             return EXIT_FAILURE;
         }
 
         std::cout << "    Listening for incoming connection on " << port << "... " << std::flush;
 
         if (pi_listen(sd, 1) < 0) {
-            std::cout << std::endl << "    ERROR listening on " << port << std::endl;
+            std::cerr << std::endl << "    ERROR listening on " << port << std::endl;
             pi_close_fixed(sd, port);
             return EXIT_FAILURE;
         }
 
         sd = pi_accept_to(sd, 0, 0, 0); // last argument is a timeout in seconds - 0 is wait forever?
         if (sd < 0) {
-            std::cout << "    ERROR accepting data on " << port << std::endl;
+            std::cerr << "    ERROR accepting data on " << port << std::endl;
             pi_close_fixed(sd, port);
             return EXIT_FAILURE;
         }
@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
 
         SysInfo sys_info;
         if (dlp_ReadSysInfo(sd, &sys_info) < 0) {
-            std::cout << "    ERROR reading system info on " << port << std::endl;
+            std::cerr << "    ERROR reading system info on " << port << std::endl;
             pi_close_fixed(sd, port);
             return EXIT_FAILURE;
         }
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
 
         // tell the palm we're going to be communicating
         if (dlp_OpenConduit(sd) < 0) {
-            std::cout << "    ERROR opening conduit with Palm" << std::endl;
+            std::cerr << "    ERROR opening conduit with Palm" << std::endl;
             pi_close_fixed(sd, port);
             return EXIT_FAILURE;
         }
@@ -922,7 +922,7 @@ int main(int argc, char **argv) {
     // open the datebook and store a handle to it in db
     int db;
     if (dlp_OpenDB(sd, 0, 0x80 | 0x40, "DatebookDB", &db) < 0) {
-        std::cout << "    ERROR unable to open DatebookDB on Palm" << std::endl;
+        std::cerr << "    ERROR unable to open DatebookDB on Palm" << std::endl;
         // (char*) is a little unsafe, but function does not edit the string
         dlp_AddSyncLogEntry(sd, (char*)"Unable to open DatebookDB.\n"); // log on palm
         pi_close_fixed(sd, port);
@@ -940,7 +940,7 @@ int main(int argc, char **argv) {
         // delete ALL records
         std::cout << "    Deleting existing Palm datebook..." << std::flush;
         if (dlp_DeleteRecord(sd, db, 1, 0) < 0) {
-            std::cout << std::endl << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
+            std::cerr << std::endl << "    ERROR unable to delete DatebookDB records on Palm" << std::endl;
             // (char*) is a little unsafe, but function does not edit the string
             dlp_AddSyncLogEntry(sd, (char*)"Unable to delete DatebookDB records.\n"); // log on palm
             pi_close_fixed(sd, port);

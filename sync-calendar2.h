@@ -24,12 +24,12 @@
 
 // fail to exit if this config item can't be read
 #define FAIL_CFG(LABEL, VAR) if (!cfg.lookupValue(#LABEL, VAR)) { \
-    std::cerr << "    No "#LABEL" setting in configuration file, failing." << std::endl; \
+    std::cerr << "    ERROR with "#LABEL" setting in configuration file, failing." << std::endl; \
     return EXIT_FAILURE; } else { \
     std::cout << "    Config "#LABEL": " << VAR << std::endl; }
 // assume default value of this item can't be read
 #define NON_FAIL_CFG(LABEL, VAR) if (!cfg.lookupValue(#LABEL, VAR)) \
-    { std::cerr << "    No "#LABEL" setting, assuming " << VAR << "." << std::endl; } else { \
+    { std::cout << "    No "#LABEL" setting, assuming " << VAR << "." << std::endl; } else { \
     std::cout << "    Config "#LABEL": " << VAR << std::endl; }
 
 // callback for having curl store output in a std::string
@@ -88,7 +88,7 @@ int pi_close_fixed(int sd, std::string port) {
 
     // close the link to the palm
     if (pi_close(sd) < 0) {
-        std::cout << std::endl << "    ERROR closing socket to plam pilot" << std::endl << std::flush;
+        std::cerr << std::endl << "    ERROR closing socket to plam pilot" << std::endl << std::flush;
         return -1;
     }
 
