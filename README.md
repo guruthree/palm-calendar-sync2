@@ -82,12 +82,13 @@ If your Palm has been recently been reset, a HotSync may not work until the Date
 Without options `calendar-sync2` will run according to the `datebook.cfg` configuration file. If no configuration file is found or run as `calendar-sync2 -h` a help message with a list of command line arguments will be displayed.
 
 ```
-palm-calendar-sync2-main/build $ ./sync-calendar2 -h
+palm-calendar-sync2/build $ ./sync-calendar2 -h
+    sync-calendar2 (debug build)
+
     ==> Reading arguments <==
     Argument -h
 
-    sync-calendar2, a tool for copying an ical calendar to Palm
-
+    sync-calendar2 (debug build) a tool for copying ical calendars to Palm
     Usage: sync-calendar2 [options]
 
     Options:

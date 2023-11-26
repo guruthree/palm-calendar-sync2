@@ -44,7 +44,11 @@
 // add log4cplus for logging?
 
 void helpmessage() {
+#ifdef SYNCVERSION
+    std::cout << "    sync-calendar2 (" << SYNCVERSION << ") a tool for copying ical calendars to Palm" << std::endl;
+#else
     std::cout << "    sync-calendar2, a tool for copying ical calendars to Palm" << std::endl << std::endl;
+#endif
     std::cout << "    Usage: sync-calendar2 [options]" << std::endl << std::endl;
     std::cout << "    Options:" << std::endl << std::endl;
     std::cout << "        -c  Specify config file (default " << DEFAULT_CONFIG_FILE << ")" << std::endl;
@@ -55,9 +59,6 @@ void helpmessage() {
 }
 
 int main(int argc, char **argv) {
-#ifdef SYNCVERSION
-    std::cout << "    sync-calendar2, " << SYNCVERSION << std::endl << std::endl;
-#endif
 
     // configuration settings & defaults
     std::string configfile(DEFAULT_CONFIG_FILE);
@@ -75,6 +76,9 @@ int main(int argc, char **argv) {
         helpmessage();
         return EXIT_SUCCESS;
     }
+#ifdef SYNCVERSION
+    std::cout << "    sync-calendar2 (" << SYNCVERSION << ")" << std::endl << std::endl;
+#endif
 
 
     /** read in command line arguments **/
