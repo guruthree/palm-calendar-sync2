@@ -1,0 +1,25 @@
+# Maintainer: guruthree
+
+pkgname=calendar-sync2
+pkgver=0.0.1
+pkgrel=1
+pkgdesc="Make your Palm Pilot useful again by downloading your Google Calendar to it"
+arch=('i686' 'x86_64' 'armv6h' 'armv7h' 'aarch64')
+license=('GPL' 'LGPL')
+depends=('pilot-link' 'libusb' 'libusb-compat' 'cmake' 'git')
+url=https://github.com/guruthree/palm-$pkgname
+source=(https://github.com/guruthree/palm-$pkgname.git)
+# https://github.com/guruthree/palm-$pkgname/commit/$_commit ???
+# md5sums=('XXX') ?
+
+build() { 
+    mkdir build
+    cd build
+    cmake ..
+    make
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  cp $pkgname "${pkgdir}"
+}
