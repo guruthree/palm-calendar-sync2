@@ -47,7 +47,7 @@ void helpmessage() {
     std::cout << "    sync-calendar2, a tool for copying an ical calendar to Palm" << std::endl << std::endl;
     std::cout << "    Usage: sync-calendar2 [options]" << std::endl << std::endl;
     std::cout << "    Options:" << std::endl << std::endl;
-    std::cout << "        -c  Specify config file (default datebook.cfg)" << std::endl;
+    std::cout << "        -c  Specify config file (default " << DEFAULT_CONFIG_FILE << ")" << std::endl;
     std::cout << "        -h  Print this help message and quit" << std::endl;
     std::cout << "        -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
     std::cout << "        -u  Override calendar URI (can be used multiple times)" << std::endl;
