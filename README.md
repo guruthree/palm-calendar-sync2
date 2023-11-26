@@ -47,7 +47,7 @@ What is an Apptainer image? It is a containerised environment similar to Docker,
 
 You can build the Apptainer image yourself of the latest version by downloading the [definition file](https://github.com/guruthree/palm-calendar-sync2/blob/main/distribution/calendar-sync2.def), and then running `apptainer build calendar-sync2.sif calendar-sync2.def`.
 
-You can also download an Apptainer image from [[INSERT URL HERE]].
+You can also download an Apptainer image from the [releases page](https://github.com/guruthree/palm-calendar-sync2/releases/) or the most recent release [v0.0.1 (fb7779f)](https://github.com/guruthree/palm-calendar-sync2/releases/download/v0.0.1/calendar-sync2.sif).
 
 ### Running calendar-sync2 from the Apptainer image
 
