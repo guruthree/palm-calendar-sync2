@@ -165,7 +165,7 @@ From: archlinux:base-devel
 # image information
 %labels
     Title:   sync-calendar2.sif
-    Author:  theguruofthree
+    Author:  guruthree
     Version: 0.0.1
 
 %help
