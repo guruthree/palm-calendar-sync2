@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     std::vector<std::string> alluris;
     std::string port, timezone("UTC");
     int fromyear = 0;
-    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, onlynew = false, insecure = false;
+    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, onlynew = false, secure = false;
     bool portoverride = false, urioverride = false; // command line argument overrides config file argument
 
     // use to keep track if something happened or not (often for exiting on an error)
@@ -175,7 +175,7 @@ int main(int argc, char **argv) {
     NON_FAIL_CFG(OVERWRITE, overwrite)
     NON_FAIL_CFG(ONLYNEW, onlynew)
     NON_FAIL_CFG(DOALARMS, doalarms)
-    NON_FAIL_CFG(INSECURE, insecure)
+    NON_FAIL_CFG(SECURE, secure)
     std::cout << std::endl << std::flush;
 
 
@@ -260,7 +260,7 @@ int main(int argc, char **argv) {
             curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
 
             // disable some SSL checks, reduced security
-            if (insecure) {
+            if (!secure) {
                 curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
                 curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
             }
