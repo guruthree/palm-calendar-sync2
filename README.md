@@ -1,13 +1,14 @@
 # palm-calendar-sync2
 Make your Palm Pilot useful again by downloading your calendar to it (attempt #2).
 
-If you've got an old [Palm Pilot](https://en.wikipedia.org/wiki/PalmPilot) kicking around you've probably had some fun play-time nostalgia getting it out, but noticed that it's not so easy to make use of it's PIM functionality now that almost all of that stuff is an online service. This project attempts to remedy that somewhat for the Datebook function.
+If you've got an old [Palm Pilot](https://en.wikipedia.org/wiki/PalmPilot) kicking around you've probably had some fun playtime nostalgia getting it out, but noticed that it's not so easy to make use of it's PIM (personal information management) functionality now that almost all that stuff is an online service. This project attempts to remedy that somewhat for the Datebook function.
 
-`calendary-sync2` is a stand-alone tool to read an [iCaliendar](https://en.wikipedia.org/wiki/ICalendar) (ical/ics)  formatted date-book/calendar and send it to a Palm Pilot using a HotSync. This should allow for an up-to-date at the time of HotSync calendar to be made available on a Palm device.
+`calendar-sync2` is a tool to read an [iCalendar](https://en.wikipedia.org/wiki/ICalendar) (ical/ics)  formatted date-book/calendar and send it to a Palm Pilot using a HotSync. This should allow for an up-to-date at the time of HotSync calendar to be available on a Palm device.
 
 A YouTube video outlining the project:
 
 [![Getting Google Calendar on a Palm Pilot](resources/youtube-thumb.jpg)](https://www.youtube.com/watch?v=iAAXIlFZGh8)
+
 
 ## Background
 
@@ -19,12 +20,13 @@ I previously attempted a similar project, [google-calendar-to-palm-pilot](https:
 4. Dependency on the [pilot-datebook](https://github.com/guruthree/pilot-datebook) tool
 5. No alarms would be copied
 
-These issues have been addressed by writing the application in C this time and directly using the pilot-link libpisock library.
+These issues have been addressed by writing the application in C(++) this time and directly using the [pilot-link](https://tldp.org/HOWTO/PalmOS-HOWTO/pilotlink.html) libpisock library.
+
 
 ## Features
 
-* Fetches calendars over http/https
-* Read and merges calendar with existing calendar, preserving any Palm-only Datebook events
+* Fetches multiple calendars over http/https
+* Read and merges multiple calendars with existing calendar, preserving any Palm-only Datebook events
 * Works with USB, serial, and network HotSync
 * Fully compatible (I hope) with the [Google-calendar ics export](https://support.google.com/calendar/answer/37648?hl=en#zippy=%2Cget-your-calendar-view-only)
 * Alarms (optional)
@@ -32,70 +34,55 @@ These issues have been addressed by writing the application in C this time and d
 * Descriptions, location, and attendees added to a Note
 * Dates and times translated to specified time zone
 
-## Compiling
 
-Dependencies:
+## Getting palm-calendar-sync2
 
-* pilot-link/libpisock
-* libconfig
-* libcurl
-* libical
-* libusb/libusb-compat
-* gcc and cmake for compiling
+At the moment this project requires Linux of some description. Theoretically I think there's nothing that would stop it from working on Windows, either via the [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) (WSL) or [Cygwin](https://www.cygwin.com/), but I haven't tested it. I've no idea about macOS - let me know if you get it working! Linux in a Virtual Machine with a pass-through connection to your Palm Pilot (either USB, serial, or network) should also be sufficient.
 
-Unfortunately not all distributions distribute pilot-link any more. Some distributions that do include [Arch Linux](https://aur.archlinux.org/packages/pilot-link), [Gentoo](https://packages.gentoo.org/packages/app-pda/pilot-link), and [Fedora](https://packages.fedoraproject.org/pkgs/pilot-link/pilot-link/). However, Debian, Ubuntu, and OpenSuse no longer include pilot-link with their latest versions.
+OK, now that you have a Linux environment. There are two options. You could install the dependencies, create a build environment, and compile `calendar-sync2` (see the Compiling section below). Alternatively, I have provided a pre-compiled version of `calendar-sync2` in an [Apptainer](https://apptainer.org/) image.
 
-If your distribution does not distribute a pilot-link package, there are a few options. You can compile from source, either using the [archive git repo and Gentoo patch set](https://github.com/jichu4n/pilot-link/issues/3) or a [more recently maintained fork](https://github.com/desrod/pilot-link). It might also be possible to use the binaries from another distribution that still packages pilot-link.
+What is an Apptainer image? It is a containerised environment similar to Docker, containing a the files needed to run the application, but running in user space without escalated privileges. In my case the image consists of stripped down Arch Linux, the dependencies (including pilot-link), and `calendar-sync2`. This is a bit bulkier, but should run on a wide variety of Linux distributions as long as Apptainer is installed and means I don't have to worry about dependencies.
 
-After installing the dependencies (which make include dependency-devel packages on some distributions) then building `calendary-sync2` is straight forward.
+### Getting the Apptainer image
 
-In words:
+You can build the Apptainer image yourself of the latest version by downloading the [definition file](https://github.com/guruthree/palm-calendar-sync2/blob/main/distribution/calendar-sync2.def), and then running `apptainer build calendar-sync2.sif calendar-sync2.def`.
 
-1. Download this repository (e.g., using `git clone` or the GitHub "Download ZIP" function)
-1. In the `palm-calendary-sync2` directory, create a `build` directory
-1. Inside `build` directory, initialise the make system using `cmake ..`
-1. Compile using `make`
+You can also download an Apptainer image from [[INSERT URL HERE]].
 
-In commands:
+### Running calendar-sync2 from the Apptainer image
 
-```
-wget https://github.com/guruthree/palm-calendary-sync2/archive/refs/heads/main.zip
-unzip palm-calendary-sync2-main.zip
-cd palm-calendary-sync2-main
-mkdir build
-cd build
-cmake ..
-make
-```
+* `apptainer run calendar-sync2.sif` will run the main application.
+* `apptainer run-help calendar-sync2.sif` will provide information on the applications in the image.
+* `apptainer run --app pilot-xfer calendar-sync2.sif` will run the pilot-link pilot-xfer tool. pilot-xfer can be replaced with any of the pilot-link applications.
 
-These steps will produce the `calendary-sync2` binary. Theoretically this should all work on Windows with the [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) (WSL) or [Cygwin](https://www.cygwin.com/), but I haven't tested this.
+`calendar-sync` may also be run from the image in a short hand form for just  as `./calendar-sync2.sif`. This still requires Apptainer to be installed.
 
 ## Usage
 
-After downloading and configuring `calendary-sync2`, the general usage would be as follows:
+After getting and configuring `calendar-sync2`, the general usage would be as follows:
 
-1. Run `calendary-sync2`
-2. Trigger a HotSync
-3. Enjoy using your Palm to browse your upcoming events
+1. Run `calendar-sync2`.
+2. Trigger a HotSync.
+3. Enjoy using your Palm to browse your upcoming events.
 
-More specifically, `calendary-sync2` is controlled primarily through the `datebook.cfg` and [an example](https://github.com/guruthree/palm-calendary-sync2/blob/main/datebook.cfg) is included that will sync the libical recurring event test file to a Palm device connected via USB. This config file contains explanations of the configuration options, but the most important settings are:
+More specifically, `calendar-sync2` is controlled primarily through a configuration file (default `datebook.cfg`) and [an example](https://github.com/guruthree/palm-calendar-sync2/blob/main/datebook.cfg) is included that will sync the libical recurring event test file and the Google UK Holiday calendar to a Palm device connected via USB. The example config file contains explanations of the configuration options, but the most important settings are:
 
-* `URI` which specifies the location of the calendar.
-* `PORT` which specifies how the Palm will connect (typically either via "usb:" or a serial port such as "/dev/ttyUSB0").
-* `OVERWRITE` which will specify if `calendary-sync2` overwrites the existing Datebook on the Palm. **Note, by default `calendar-sync2` will overwrite the existing Datebook.**
+* `URI` which specifies the location(s) of the calendar, either as a single calendar `URI="https://address"` or a list of addresses `URI=("https://address1", "https://address2"`).
+* `PORT` which specifies how the Palm will connect (typically either via `PORT="usb:"` or a serial port such as `PORT="/dev/ttyUSB0"`).
+* `OVERWRITE` which will specify if `calendar-sync2` overwrites the existing Datebook on the Palm. **WARNING: By default `calendar-sync2` will overwrite the existing Datebook.**
 
 Useful settings include:
 
-* `TIMEZONE` which should be set to your local time zone so that events are at the correct times and not UTC.
+* `TIMEZONE` which should be set to your local time zone so that events are at the correct times, as otherwise times will be in UTC (GMT+0).
 * `FROMYEAR` as a YYYY year indicates a cut-off year for events to be copied to the palm to reduce resource consumption.
-* `DOALARMS` true/false do/do not transfer alarms/reminders to the Palm. The Palm's alarm settings are not very granular so the option to disable them is provided to avoid being woken up at 3 AM.
+* `DOALARMS` true or false, to or not to transfer alarms/reminders to the Palm. The Palm's alarm settings are not very granular so the option to disable them is provided to avoid being woken up at 3 AM.
 
-If your Palm has been recently been reset, a HotSync may not work until the Datebook has been initialised by create an event.
+If your Palm has been recently been reset, a HotSync may not work until the Datebook has been initialised by creating an event yourself on the Palm.
 
-Run without options `calendary-sync2` will run according to the `datebook.cfg` configuration file. It can however be instead run as `calendary-sync2 -h` to review a list of command line arguments.
+Without options `calendar-sync2` will run according to the `datebook.cfg` configuration file. If no configuration file is found or run as `calendar-sync2 -h` a help message with a list of command line arguments will be displayed.
 
 ```
-palm-calendary-sync2-main/build $ ./sync-calendar2 -h
+palm-calendar-sync2-main/build $ ./sync-calendar2 -h
     ==> Reading arguments <==
     Argument -h
 
@@ -108,9 +95,48 @@ palm-calendary-sync2-main/build $ ./sync-calendar2 -h
         -c  Specify config file (default datebook.cfg)
         -h  Print this help message and quit
         -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)
-        -u  Override calendar URI
+        -u  Override calendar URI (can be used multiple times)
 ```
 
-When running, `calendary-sync2` will produce output to verify that it is reading events correctly and provide information on the HotSync progress.
+While running, `calendar-sync2` will produce output to verify that it is reading events correctly and provide information on the HotSync progress.
 
-If you would like to sync multiple calendars to your Palm device, disable overwriting in the config and either utilise multiple configuration files with the `-c` option specifying each config file, or setup a generic config and change the calendar being synced using the `-u` option. Unfortunately there is currently no way to transfer multiple calendars in a single HotSync.
+
+## Compiling
+
+Dependencies:
+
+* pilot-link/libpisock
+* libconfig
+* libcurl
+* libical
+* libusb/libusb-compat
+* gcc and cmake for compiling
+
+Unfortunately not all distributions distribute pilot-link any more. [Gentoo](https://packages.gentoo.org/packages/app-pda/pilot-link) and [Fedora](https://packages.fedoraproject.org/pkgs/pilot-link/pilot-link/) do, while, Debian, Ubuntu, and OpenSuse no longer include pilot-link with their latest versions. If your distribution does not distribute a pilot-link package, unfortunately you can't compile from the original sources any longer due to changes in gcc, etc. However, there are a few sets of patched sources floating around:
+
+* For users of Arch Linux, there is an [pilot-link AUR](https://aur.archlinux.org/packages/pilot-link) that can be used to compile, although additional modifications might be necessary.
+* Gentoo provides a [patch set that lets you build from the original sources](https://github.com/jichu4n/pilot-link/issues/3).
+* There is [more recently maintained fork](https://github.com/desrod/pilot-link).
+
+After installing the dependencies (which may include dependency -dev/-devel packages on some distributions), then building `calendar-sync2` is straight forward.
+
+In words:
+
+1. Download this repository (e.g., using `git clone` or the GitHub "Download ZIP" function).
+1. In the `palm-calendar-sync2` directory, create a `build` directory.
+1. Inside `build` directory, initialise the make system using the `cmake ..` command.
+1. Compile using `make`.
+
+In commands:
+
+```
+wget https://github.com/guruthree/palm-calendar-sync2/archive/refs/heads/main.zip
+unzip palm-calendar-sync2-main.zip
+cd palm-calendar-sync2-main
+mkdir build
+cd build
+cmake ..
+make
+```
+
+These steps will produce the `calendar-sync2` binary, which can be added to your bin path of choice.

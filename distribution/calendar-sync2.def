@@ -1,0 +1,187 @@
+Bootstrap: docker
+From: archlinux:base-devel
+
+# https://apptainer.org/docs/user/main/definition_files.html
+# https://apptainer.org/docs/user/main/build_a_container.html
+# https://hub.docker.com/_/archlinux/
+
+# apptainer build --sandbox calendar-sync2/ calendar-sync2.def
+# apptainer shell --fakeroot -c --writable calendar-sync2/
+# apptainer inspect calendar-sync2.sif
+# apptainer run-help calendar-sync2.sif
+# apptainer build calendar-sync2.sif calendar-sync2.def
+# apptainer run calendar-sync2.sif
+# apptainer run --app pilot-xfer calendar-sync2.sif
+
+
+# executed on the host system outside of the container
+#%setup
+
+
+# copy files from host to system to container
+#%files
+
+
+# download files from the internet, install new software and libraries, write configuration files, create new directories, etc
+%post
+    # add in some likely locales to make annoying locale errors go away
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+    echo "en_GB.UTF-8 UTF-8" >> /etc/locale.gen
+    locale-gen
+
+    # update package library
+    pacman -Sy
+
+    # create temporary user for building packages
+    useradd --no-create-home build
+    echo "build ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers    
+
+    # fetch pilot link dependencies
+    pacman -S --noconfirm git readline libpng libusb-compat popt # bluez
+
+    # fetch pilot-link
+    git clone https://aur.archlinux.org/pilot-link.git
+
+    # fix for compiling pilot-link, see https://aur.archlinux.org/packages/pilot-link#comment-910563
+    cat /etc/makepkg.conf  | sed -e "s/-W[-0-9A-Za-z,=_]*//g" > /tmp/mytmp
+    mv /tmp/mytmp /etc/makepkg.conf
+
+    # permissions fix for working as build user
+    chmod 777 pilot-link
+    cd pilot-link
+    # repair cflags for broken configure
+    cat PKGBUILD | sed -e 's/build() {/build() { CFLAGS=\`echo "$CFLAGS" \| sed -e "s\/  *\/ \/g"\`; CXXFLAGS="$CFLAGS"/' > /tmp/mytmp
+    # remove bluetooth and enable header installation for development
+    cat /tmp/mytmp | sed -e "s/'bluez>=4.59'//" | sed -e "s/--with-libpng/--with-libpng --includedir=\/usr\/include\/libpisock\//" > PKGBUILD
+    # build and install pilot-link
+    su -c makepkg build
+    pacman -U --noconfirm pilot-link*zst
+
+    # install dependencies
+    pacman -S --noconfirm libconfig curl libical cmake
+
+    # download and install sync-calendar2
+    cd /root
+    git clone https://github.com/guruthree/palm-calendar-sync2.git
+    cd palm-calendar-sync2/
+    mkdir build
+    cd build
+    cmake ..
+    make
+    cp sync-calendar2 /usr/bin/
+
+    # clean up
+    userdel build
+    cat /etc/sudoers | grep -v build > /tmp/mytmp
+    mv /tmp/mytmp /etc/sudoers
+    pacman -Rns --noconfirm base-devel # get space back from gcc & company
+
+
+# any environment variables when running
+#%environment
+
+
+# what happens when run without arguments (could just be a message using exec echo"
+%runscript
+    sync-calendar2 "$@"
+
+
+# applications and commands to run them in the image
+%apprun sync-calendar2
+    sync-calendar2 "$@"
+%apprun pilot-addresses
+    pilot-addresses "$@"
+%apprun pilot-clip
+    pilot-clip "$@"
+%apprun pilot-csd
+    pilot-csd "$@"
+%apprun pilot-debugsh
+    pilot-debugsh "$@"
+%apprun pilot-dedupe
+    pilot-dedupe "$@"
+%apprun pilot-dlpsh
+    pilot-dlpsh "$@"
+%apprun pilot-file
+    pilot-file "$@"
+%apprun pilot-foto
+    pilot-foto "$@"
+%apprun pilot-foto-treo600
+    pilot-foto-treo600 "$@"
+%apprun pilot-foto-treo650
+    pilot-foto-treo650 "$@"
+%apprun pilot-getram
+    pilot-getram "$@"
+%apprun pilot-getrom
+    pilot-getrom "$@"
+%apprun pilot-getromtoken
+    pilot-getromtoken "$@"
+%apprun pilot-hinotes
+    pilot-hinotes "$@"
+%apprun pilot-install-datebook
+    pilot-install-datebook "$@"
+%apprun pilot-install-expenses
+    pilot-install-expenses "$@"
+%apprun pilot-install-hinote
+    pilot-install-hinote "$@"
+%apprun pilot-install-memo
+    pilot-install-memo "$@"
+%apprun pilot-install-netsync
+    pilot-install-netsync "$@"
+%apprun pilot-install-todo
+    pilot-install-todo "$@"
+%apprun pilot-install-todos
+    pilot-install-todos "$@"
+%apprun pilot-install-user
+    pilot-install-user "$@"
+%apprun pilot-memos
+    pilot-memos "$@"
+%apprun pilot-nredir
+    pilot-nredir "$@"
+%apprun pilot-read-expenses
+    pilot-read-expenses "$@"
+%apprun pilot-read-ical
+    pilot-read-ical "$@"
+%apprun pilot-read-notepad
+    pilot-read-notepad "$@"
+%apprun pilot-read-palmpix
+    pilot-read-palmpix "$@"
+%apprun pilot-read-screenshot
+    pilot-read-screenshot "$@"
+%apprun pilot-read-todos
+    pilot-read-todos "$@"
+%apprun pilot-read-veo
+    pilot-read-veo "$@"
+%apprun pilot-reminders
+    pilot-reminders "$@"
+%apprun pilot-schlep
+    pilot-schlep "$@"
+%apprun pilot-wav
+    pilot-wav "$@"
+%apprun pilot-xfer
+    pilot-xfer "$@"
+
+
+# image information
+%labels
+    Title:   sync-calendar2.sif
+    Author:  theguruofthree
+    Version: 0.0.1
+
+%help
+    This container is hosts a copy of pilot-link and sync-calendar2 for
+    hot-syncing *.ics calendar files, like Google calendar, to Palm Pilot
+    PDA computers.
+
+    Apps in the image:
+    sync-calendar2, pilot-addresses, pilot-clip, pilot-csd, pilot-debugsh,
+    pilot-dedupe, pilot-dlpsh, pilot-file, pilot-foto, pilot-foto-treo600,
+    pilot-foto-treo650, pilot-getram, pilot-getrom, pilot-getromtoken,
+    pilot-hinotes, pilot-install-datebook, pilot-install-expenses,
+    pilot-install-hinote, pilot-install-memo, pilot-install-netsync,
+    pilot-install-todo, pilot-install-todos, pilot-install-user, pilot-memos,
+    pilot-nredir, pilot-read-expenses, pilot-read-ical, pilot-read-notepad,
+    pilot-read-palmpix, pilot-read-screenshot, pilot-read-todos, pilot-read-veo,
+    pilot-reminders, pilot-schlep, pilot-wav, and pilot-xfer.
+
+    See https://github.com/guruthree/palm-calendar-sync2 for more detail
