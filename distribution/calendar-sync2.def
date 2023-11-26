@@ -67,7 +67,7 @@ From: archlinux:base-devel
     cd palm-calendar-sync2/
     mkdir build
     cd build
-    cmake ..
+    cmake -DCMAKE_BUILD_TYPE=Release ..
     make
     cp sync-calendar2 /usr/bin/
 

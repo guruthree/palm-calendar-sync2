@@ -124,7 +124,7 @@ In words:
 
 1. Download this repository (e.g., using `git clone` or the GitHub "Download ZIP" function).
 1. In the `palm-calendar-sync2` directory, create a `build` directory.
-1. Inside `build` directory, initialise the make system using the `cmake ..` command.
+1. Inside `build` directory, initialise the make system using the `cmake -DCMAKE_BUILD_TYPE=Release ..` command.
 1. Compile using `make`.
 
 In commands:
@@ -135,7 +135,7 @@ unzip palm-calendar-sync2-main.zip
 cd palm-calendar-sync2-main
 mkdir build
 cd build
-cmake ..
+cmake -DCMAKE_BUILD_TYPE=Release ..
 make
 ```
 
