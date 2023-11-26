@@ -488,7 +488,7 @@ int main(int argc, char **argv) {
                         }
 
                         if (attendee_cn != "") {
-                            std::cout << "CN: " << attendee_cn << std::endl;
+//                            std::cout << "CN: " << attendee_cn << std::endl;
                             note = note + "\n" + attendee_cn;
                         }
                         else {
