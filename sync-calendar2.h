@@ -22,6 +22,9 @@
 
 #include <libical/ical.h>
 
+// default configuration file
+#define DEFAULT_CONFIG_FILE "datebook.cfg"
+
 // fail to exit if this config item can't be read
 #define FAIL_CFG(LABEL, VAR) if (!cfg.lookupValue(#LABEL, VAR)) { \
     std::cerr << "    ERROR with "#LABEL" setting in configuration file, failing." << std::endl; \

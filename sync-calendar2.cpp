@@ -23,6 +23,7 @@
 // note not fully ical complient, but should work with google calendar exports
 
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -42,10 +43,21 @@
 
 // add log4cplus for logging?
 
+void helpmessage() {
+    std::cout << "    sync-calendar2, a tool for copying an ical calendar to Palm" << std::endl << std::endl;
+    std::cout << "    Usage: sync-calendar2 [options]" << std::endl << std::endl;
+    std::cout << "    Options:" << std::endl << std::endl;
+    std::cout << "        -c  Specify config file (default datebook.cfg)" << std::endl;
+    std::cout << "        -h  Print this help message and quit" << std::endl;
+    std::cout << "        -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
+    std::cout << "        -u  Override calendar URI (can be used multiple times)" << std::endl;
+    std::cout << std::endl;
+}
+
 int main(int argc, char **argv) {
 
     // configuration settings & defaults
-    std::string configfile("datebook.cfg");
+    std::string configfile(DEFAULT_CONFIG_FILE);
     std::vector<std::string> alluris;
     std::string port, timezone("UTC");
     int fromyear = 0;
@@ -54,6 +66,12 @@ int main(int argc, char **argv) {
 
     // use to keep track if something happened or not (often for exiting on an error)
     bool failed = true;
+
+    // if the default configfile doesn't exist and there aren't any arguments, help the user out
+    if (argc == 1 && !std::filesystem::exists(DEFAULT_CONFIG_FILE)) {
+        helpmessage();
+        return EXIT_SUCCESS;
+    }
 
 
     /** read in command line arguments **/
@@ -66,14 +84,7 @@ int main(int argc, char **argv) {
             case 'h': // port
                 std::cout << "    Argument -h" << std::endl;
                 std::cout << std::endl;
-                std::cout << "    sync-calendar2, a tool for copying an ical calendar to Palm" << std::endl << std::endl;
-                std::cout << "    Usage: sync-calendar2 [options]" << std::endl << std::endl;
-                std::cout << "    Options:" << std::endl << std::endl;
-                std::cout << "        -c  Specify config file (default datebook.cfg)" << std::endl;
-                std::cout << "        -h  Print this help message and quit" << std::endl;
-                std::cout << "        -p  Override config file port (e.g., /dev/ttyS0, net:any, usb:)" << std::endl;
-                std::cout << "        -u  Override calendar URI" << std::endl;
-                std::cout << std::endl;
+                helpmessage();
                 return EXIT_SUCCESS;
 
             case 'u': // uri
