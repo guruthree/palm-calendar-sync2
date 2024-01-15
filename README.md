@@ -113,7 +113,7 @@ Dependencies:
 * libusb/libusb-compat
 * gcc and cmake for compiling
 
-Unfortunately not all distributions distribute pilot-link any more. [Gentoo](https://packages.gentoo.org/packages/app-pda/pilot-link) and [Fedora](https://packages.fedoraproject.org/pkgs/pilot-link/pilot-link/) do, while, Debian, Ubuntu, and OpenSuse no longer include pilot-link with their latest versions. If your distribution does not distribute a pilot-link package, unfortunately you can't compile from the original sources any longer due to changes in gcc, etc. However, there are a few sets of patched sources floating around:
+Unfortunately not all distributions distribute pilot-link any more. [Gentoo](https://packages.gentoo.org/packages/app-pda/pilot-link) and [Fedora](https://packages.fedoraproject.org/pkgs/pilot-link/pilot-link/) do, while others such as OpenSuse no longer include pilot-link with their latest versions. [Pilot Link](https://www.jpilot.org/download/) provides their own builds of pilot-link and libpisock for Debian and Ubuntu. (Thanks to @clintonthegeek for spotting this!) If a pilot-link package is not available for your distribution, unfortunately you can't compile from the original sources any longer due to changes in gcc, etc. However, there are a few sets of patched sources floating around:
 
 * For users of Arch Linux, there is an [pilot-link AUR](https://aur.archlinux.org/packages/pilot-link) that can be used to compile, although additional modifications might be necessary.
 * Gentoo provides a [patch set that lets you build from the original sources](https://github.com/jichu4n/pilot-link/issues/3).
