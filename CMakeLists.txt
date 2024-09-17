@@ -27,7 +27,7 @@ add_custom_target(${datebookcfgfile}
 add_dependencies(sync-calendar2 ${datebookcfgfile})
 
 # add the git revision
-find_package(Git REQUIRED)
+find_package(Git)
 if(GIT_FOUND AND CMAKE_BUILD_TYPE MATCHES Release)
     execute_process(COMMAND "${GIT_EXECUTABLE}" --git-dir ../.git rev-parse --short HEAD OUTPUT_VARIABLE SYNCVERSION OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE ret)
     if(NOT ret EQUAL "0")

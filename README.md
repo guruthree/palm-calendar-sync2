@@ -112,6 +112,7 @@ Dependencies:
 * libical
 * libusb/libusb-compat
 * gcc and cmake for compiling
+* git (if compiling release build)
 
 Unfortunately not all distributions distribute pilot-link any more. [Gentoo](https://packages.gentoo.org/packages/app-pda/pilot-link) and [Fedora](https://packages.fedoraproject.org/pkgs/pilot-link/pilot-link/) do, while others such as OpenSuse no longer include pilot-link with their latest versions. [Pilot Link](https://www.jpilot.org/download/) provides their own builds of pilot-link and libpisock for Debian and Ubuntu. (Thanks to @clintonthegeek for spotting this!) If a pilot-link package is not available for your distribution, unfortunately you can't compile from the original sources any longer due to changes in gcc, etc. However, there are a few sets of patched sources floating around:
 
@@ -141,3 +142,6 @@ make
 ```
 
 These steps will produce the `calendar-sync2` binary, which can be added to your bin path of choice.
+
+If you do not wish to compile the release build, do not add `-DCMAKE_BUILD_TYPE=Release` and instead just run the `cmake ..` command.
+This removes the git revision, host, and datetime information compiled into the binary and should also remove the dependency on git.
