@@ -64,9 +64,8 @@ int main(int argc, char **argv) {
     std::string configfile(DEFAULT_CONFIG_FILE);
     std::vector<std::string> alluris;
     std::string port, timezone("UTC");
-    int fromyear = 0;
-    int previousdays = 0;
-    bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, onlynew = false, secure = false;
+    int fromyear = 0, previousdays = 0;
+    bool dohotsync = true, readonly = false, doalarms = false, skipnotes = false, overwrite = true, onlynew = false, secure = false;
     bool portoverride = false, urioverride = false; // command line argument overrides config file argument
 
     // use to keep track if something happened or not (often for exiting on an error)
@@ -194,6 +193,7 @@ int main(int argc, char **argv) {
     NON_FAIL_CFG(TIMEZONE, timezone)
     NON_FAIL_CFG(FROMYEAR, fromyear)
     NON_FAIL_CFG(PREVIOUSDAYS, previousdays)
+    NON_FAIL_CFG(SKIPNOTES, skipnotes)
     NON_FAIL_CFG(OVERWRITE, overwrite)
     NON_FAIL_CFG(ONLYNEW, onlynew)
     NON_FAIL_CFG(DOALARMS, doalarms)
@@ -535,7 +535,7 @@ int main(int argc, char **argv) {
                     note = note + description;
                 }
 
-                if (note.length() > 0) { // note might be empty
+                if (note.length() > 0 && !skipnotes) { // note might be empty
 
                     std::cout << "    Note:\n" << note << std::endl;
 

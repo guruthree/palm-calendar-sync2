@@ -76,6 +76,7 @@ Useful settings include:
 * `TIMEZONE` which should be set to your local time zone so that events are at the correct times, as otherwise times will be in UTC (GMT+0).
 * `FROMYEAR` as a YYYY year indicates a cut-off year for events to be copied to the palm to reduce resource consumption.
 * `PREVIOUSDAYS` as a number of days indicates events older than that number of days at time of sync will not be copied the palm to reduce resource consumption.
+* `SKIPNOTES` when set to true will not add a note to events with descriptions/atendees/locations/etc, which can also reduce resource consumption.
 * `DOALARMS` true or false, to or not to transfer alarms/reminders to the Palm. The Palm's alarm settings are not very granular so the option to disable them is provided to avoid being woken up at 3 AM.
 
 If your Palm has been recently been reset, a HotSync may not work until the Datebook has been initialised by creating an event yourself on the Palm.
