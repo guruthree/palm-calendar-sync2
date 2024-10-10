@@ -924,6 +924,7 @@ int main(int argc, char **argv) {
         std::cout << "    ==> Timezone Conversion <==" << std::endl << std::flush;
 
         // mktime apparently reads off the TZ environment variable
+        // per https://rl.se/convert-utc-to-local-time
         char *tz = getenv("TZ");
         timezone = "TZ=" + timezone;
         putenv((char*)timezone.c_str());
@@ -935,14 +936,19 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            // per https://rl.se/convert-utc-to-local-time convert to time_t then back to gm
             time_t stamp;  
 
-            stamp = mktime(&Appointments[i].begin);
+            // timegm takes the tm struct and ignores TZ converting to time_t (assuming UTC, which it is)
+            // localtime take time_t and converts to a tm struct taking TZ into account
+            stamp = timegm(&Appointments[i].begin);
             Appointments[i].begin = *localtime(&stamp);
 
-            stamp = mktime(&Appointments[i].end);
+            stamp = timegm(&Appointments[i].end);
             Appointments[i].end = *localtime(&stamp);
+
+            // std::cout << "    Summary: " << Appointments[i].description << std::endl;
+            // std::cout << "    Start " << Appointments[i].begin.tm_zone << ": " << asctime(&Appointments[i].begin);
+            // std::cout << "    End " << Appointments[i].end.tm_zone << ": " << asctime(&Appointments[i].end) << std::endl;
 
             // repeat end? don't need to as it always is 23:59:59 on the day
             // loop exceptions? don't need to because also only a day
@@ -957,7 +963,7 @@ int main(int argc, char **argv) {
             putenv((char*)"TZ=");
         }
 
-        std::cout << "    Converted to " << timezone.substr(3) << std::endl;
+        std::cout << "    Converted to " << timezone.substr(3) << std::endl << std::endl;
     }
 
 
