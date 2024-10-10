@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     std::cout << "    ==> Reading configuration <==" << std::endl << std::flush;
 
     libconfig::Config cfg;
-    cfg.setOption(libconfig::Config::OptionAutoConvert, true); // float to int and viceversa?
+    cfg.setOptions(libconfig::Config::OptionAutoConvert); // float to int and viceversa?
     try {
         std::cout << "    Reading from " << configfile << std::endl;
         cfg.readFile(configfile);
