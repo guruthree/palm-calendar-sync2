@@ -65,6 +65,7 @@ int main(int argc, char **argv) {
     std::vector<std::string> alluris;
     std::string port, timezone("UTC");
     int fromyear = 0;
+    int previousdays = 0;
     bool dohotsync = true, readonly = false, doalarms = false, overwrite = true, onlynew = false, secure = false;
     bool portoverride = false, urioverride = false; // command line argument overrides config file argument
 
@@ -80,6 +81,8 @@ int main(int argc, char **argv) {
     std::cout << "    sync-calendar2 (" << SYNCVERSION << ")" << std::endl << std::endl;
 #endif
 
+    // the time now for calculating events age in days
+    time_t today = time(NULL);
 
     /** read in command line arguments **/
 
@@ -190,6 +193,7 @@ int main(int argc, char **argv) {
     NON_FAIL_CFG(READONLY, readonly)
     NON_FAIL_CFG(TIMEZONE, timezone)
     NON_FAIL_CFG(FROMYEAR, fromyear)
+    NON_FAIL_CFG(PREVIOUSDAYS, previousdays)
     NON_FAIL_CFG(OVERWRITE, overwrite)
     NON_FAIL_CFG(ONLYNEW, onlynew)
     NON_FAIL_CFG(DOALARMS, doalarms)
@@ -892,12 +896,21 @@ int main(int argc, char **argv) {
                     }
 
 
-                    // skip if it's older than FROMYEAR and repeating until now
+                    // skip if it's older than FROMYEAR and not repeating until after FROMYEAR
                     if ((appointment.begin.tm_year + 1900) < fromyear && 
                             !appointment.repeatForever && 
                             !((appointment.repeatEnd.tm_year + 1900) >= fromyear)) {
                         failed = true; // gets put in docopy
                         std::cout << "    Earlier than " << fromyear << ", ignoring" << std::endl;
+                    }
+
+                    // skip if it's older than PREVIOUSDAYS and not repeating until now
+                    if ((today - timelocal(&appointment.begin)) / 86400.0 > previousdays && 
+                            !appointment.repeatForever &&
+                            // the end date of the repeat is more than previous days in the past
+                            (today - timelocal(&appointment.repeatEnd)) / 86400.0 > previousdays ) {
+                        failed = true; // gets put in docopy
+                        std::cout << "    Older than " << previousdays << " days, ignoring" << std::endl;
                     }
 
                     docopy.push_back(!failed);
