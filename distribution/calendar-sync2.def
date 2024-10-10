@@ -164,9 +164,9 @@ From: archlinux:base-devel
 
 # image information
 %labels
-    Title:   sync-calendar2.sif
-    Author:  guruthree
-    Version: 0.0.1
+    Title   sync-calendar2.sif
+    Author  guruthree
+    Version 0.0.1
 
 %help
     This container is hosts a copy of pilot-link and sync-calendar2 for
